@@ -2,6 +2,8 @@
 
 import re
 import unicodedata
+import math
+from collections import Counter
 
 from ..runtime import (ERROR, ErrorToken)
 from ..ordered import OrderedSet
@@ -31,6 +33,13 @@ FALLIBLE_METHOD_NAMES = {
     'pre_increment_expr',
 }
 
+class ActionKind:
+    """Store the compressed action kinds to be stored instead of the transition
+    list."""
+    def __init__(self, kind, mask, state):
+        self.kind = kind
+        self.mask = mask
+        self.state = state
 
 class RustParserWriter:
     def __init__(self, out, parser_states):
@@ -43,6 +52,80 @@ class RustParserWriter:
             t for state in self.states for t in state.action_row))
         self.nonterminals = list(OrderedSet(
             nt for state in self.states for nt in state.ctn_row))
+
+    def compress_actions(self):
+        """Actions are a mapping of (state, terminal) to another state. However,
+        it is highly redundant and can be compressed. Compression is useful to
+        reduce the number of data cache misses while looking up the state
+        transition.
+
+        Each action has multiple forms of redundancy. The redundancy appears
+        either as the same state transition (repeated state numbers) or as a
+        sequence of incrementing state numbers.
+
+        Some of the repeated patterns also appear in multiple times in
+        different states. For example, the terminal `{` is frequently used as a
+        terminal and appears in multiple state transitions. Thus a pattern
+        matching all terminals expected by this state transition can be shared
+        for each state.
+
+        This function detects known forms of redundancy and attempts at
+        encoding these efficiently, as well as generating all the data
+        necessary for decoding it.
+
+        """
+        state_index = []
+        transition_list = []
+        mask_dict = {}
+        mask_list = []
+        for i, state in enumerate(self.states):
+            state_index.append(len(transition_list))
+            transition_table_ref = [state.action_row.get(t, -math.inf) for t in self.terminals]
+            filtered = [t == -math.inf for t in transition_table_ref]
+            print("Work on state {}: {}".format(i, state.traceback() or "<empty>"))
+
+            while filtered.count(False) > 0:
+                print("  Number of non-filtered elements: {}".format(filtered.count(False)))
+                transition_table = [ (-math.inf if f else s) for s, f in zip(transition_table_ref, filtered) ]
+                # Identify sequences of transitions by substracting the index,
+                # by substracting the index, we get the offset at the origin.
+                # If multiple state transition have the same offset at the
+                # origin, then we can create a sequence mask.
+                sequence_table = [ s - i for i, s in enumerate(transition_table) ]
+                state_counts = Counter(transition_table)
+                seq_counts = Counter(sequence_table)
+                del state_counts[-math.inf]
+                del seq_counts[-math.inf]
+                state, state_count = state_counts.most_common(1)[0]
+                seq, seq_count = seq_counts.most_common(1)[0]
+                if state_count >= seq_count:
+                    mask = [ state == s for s in transition_table ]
+                else:
+                    mask = [ seq == s - i for i, s in enumerate(transition_table) ]
+                mask_str = ''.join([ str(int(b)) for b in mask ])
+
+                if mask_str in mask_dict:
+                    mask_idx = mask_dict[mask_str]
+                else:
+                    mask_idx = len(mask_dict)
+                    mask_dict[mask_str] = mask_idx
+                    mask_list.append(mask_str)
+
+                if state_count >= seq_count:
+                    transition_list.append(ActionKind('Repeat', mask_idx, state))
+                else:
+                    transition_list.append(ActionKind('Sequence', mask_idx, state))
+
+                filtered = [ m or f for m, f in zip(mask, filtered) ]
+
+        # The state_index contains absolute indexes to the transition_table.
+        # However, to make the encoding of the state_index vector smaller, by
+        # using relative indexes.
+        state_index.append(len(transition_list))
+        self.transition_list = transition_list
+        self.transitions_per_state = int(len(transition_list) / len(self.states))
+        self.state_index = [ idx - i * self.transitions_per_state for i, idx in enumerate(state_index) ]
+        self.mask_list = mask_list
 
     def emit(self):
         self.header()
@@ -138,6 +221,37 @@ class RustParserWriter:
         self.write(0, "")
 
     def actions(self):
+        self.compress_actions()
+        self.write(0, "#[rustfmt::skip]")
+        self.write(0, "static ACTION_MASK: [u128; {}] = [", len(self.mask_list))
+        for i, mask in enumerate(self.mask_list):
+            self.write(1, "// {}. tokens: {}", i,
+                       ' '.join("{},".format(t) for t, m in zip(self.terminals, mask) if m == "1"))
+            self.write(1, "0b{},", mask)
+            if i < len(self.mask_list) - 1:
+                self.write(0, "")
+        self.write(0, "];")
+        self.write(0, "")
+        self.write(0, "#[rustfmt::skip]")
+        self.write(0, "static ACTIONS_TABLE: [u32; {}] = [", len(self.transition_list))
+        state_id = 0
+        for i, transition in enumerate(self.transition_list):
+            # IF we are reaching the entry for a given state, add a comment.
+            if state_id * self.transitions_per_state + self.state_index[state_id] == i:
+                self.write(1, "// {}. {}", state_id, self.states[state_id].traceback() or "<empty>")
+                state_id += 1
+            self.write(1, "(({} << 31) as u32) | (({} << 16) as u32) | (({} as i16) as u16 as u32),",
+                       1 if transition.kind == "Sequence" else 0,
+                       transition.mask,
+                       transition.state)
+        self.write(0, "];")
+        self.write(0, "")
+        self.write(0, "#[rustfmt::skip]")
+        self.write(0, "static ACTION_IDX: [i8; {}] = [", len(self.state_index))
+        for i, offset in enumerate(self.state_index):
+            self.write(1, "{},", offset)
+        self.write(0, "];")
+        self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
         self.write(0, "static ACTIONS: [i64; {}] = [",
                    len(self.states) * len(self.terminals))
