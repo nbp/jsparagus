@@ -7,3 +7,7 @@ edition = "2018"
 [dependencies]
 ast = { path = "../ast" }
 bumpalo = "2.6.0"
+
+[lib]
+name = "generated_parser"
+path = "src/lib.rs"
