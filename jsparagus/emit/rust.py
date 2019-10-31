@@ -5,7 +5,7 @@ import unicodedata
 import math
 from collections import Counter
 
-from ..runtime import (ERROR, ErrorToken)
+from ..runtime import (ACCEPT, ERROR, ErrorToken)
 from ..ordered import OrderedSet
 
 from ..grammar import (CallMethod, Some, is_concrete_element, Nt, Optional)
@@ -82,10 +82,9 @@ class RustParserWriter:
             state_index.append(len(transition_list))
             transition_table_ref = [state.action_row.get(t, -math.inf) for t in self.terminals]
             filtered = [t == -math.inf for t in transition_table_ref]
-            print("Work on state {}: {}".format(i, state.traceback() or "<empty>"))
 
+            stash_transition_list = []
             while filtered.count(False) > 0:
-                print("  Number of non-filtered elements: {}".format(filtered.count(False)))
                 transition_table = [ (-math.inf if f else s) for s, f in zip(transition_table_ref, filtered) ]
                 # Identify sequences of transitions by substracting the index,
                 # by substracting the index, we get the offset at the origin.
@@ -102,29 +101,49 @@ class RustParserWriter:
                     mask = [ state == s for s in transition_table ]
                 else:
                     mask = [ seq == s - i for i, s in enumerate(transition_table) ]
-                mask_str = ''.join([ str(int(b)) for b in mask ])
 
+                # Reverse the bit string as low bits are written last.
+                mask_str = ''.join(reversed([ str(int(b)) for b in mask ]))
                 if mask_str in mask_dict:
-                    mask_idx = mask_dict[mask_str]
+                    mask_dict[mask_str]['count'] += 1
+                    mask_idx = mask_dict[mask_str]['reg_idx']
                 else:
                     mask_idx = len(mask_dict)
-                    mask_dict[mask_str] = mask_idx
+                    mask_dict[mask_str] = { 'reg_idx' : mask_idx, 'new_idx': 0, 'count': 1 }
                     mask_list.append(mask_str)
 
                 if state_count >= seq_count:
-                    transition_list.append(ActionKind('Repeat', mask_idx, state))
+                    stash_transition_list.append(ActionKind('Repeat', mask_idx, state))
                 else:
-                    transition_list.append(ActionKind('Sequence', mask_idx, state))
+                    stash_transition_list.append(ActionKind('Sequence', mask_idx, seq))
 
                 filtered = [ m or f for m, f in zip(mask, filtered) ]
+
+            stash_transition_list.sort(key = lambda x: x.mask)
+            transition_list = transition_list + stash_transition_list
+
+        # Sort masks based on the number of time they are reused, such that the
+        # first mask to match are encountered first.
+
+        # mask_list.sort(key = lambda m: -mask_dict[m]['count'])
+        # mask_map = [ 0 for _ in mask_list ]
+        # for idx, mask in enumerate(mask_list):
+        #     mask_dict[mask]['new_idx'] = idx
+        #     mask_map[mask_dict[mask]['reg_idx']] = idx
+        # for act in transition_list:
+        #     act.mask = mask_map[act.mask]
+
+        # Invert the mask to change from `table[mask] = token-list`, to be a
+        # `table[token] = mask-list`.
+        token_masks = [''.join(reversed([ m[-1 - t] for m in mask_list ])) for t, _ in enumerate(self.terminals)]
 
         # The state_index contains absolute indexes to the transition_table.
         # However, to make the encoding of the state_index vector smaller, by
         # using relative indexes.
         state_index.append(len(transition_list))
         self.transition_list = transition_list
-        self.transitions_per_state = int(len(transition_list) / len(self.states))
-        self.state_index = [ idx - i * self.transitions_per_state for i, idx in enumerate(state_index) ]
+        self.state_index = state_index
+        self.token_masks = token_masks
         self.mask_list = mask_list
 
     def emit(self):
@@ -154,8 +173,6 @@ class RustParserWriter:
         self.write(0, "use crate::ast_builder::AstBuilder;")
         self.write(0, "use crate::stack_value_generated::{StackValue, TryIntoStack};")
         self.write(0, "use crate::error::Result;")
-        self.write(0, "")
-        self.write(0, "const ERROR: i64 = {};", hex(ERROR))
         self.write(0, "")
 
     def terminal_name(self, value):
@@ -222,45 +239,56 @@ class RustParserWriter:
 
     def actions(self):
         self.compress_actions()
+        # Split the token masks by u64, such that we can load parts of the
+        # mask-bits.
+        bits = 32
+        self.masks_bits = bits
+        token_masks = []
+        for masks in self.token_masks:
+            while masks != '':
+                token_masks.append(masks[-bits:])
+                masks = masks[:-bits]
+        masks_per_token = int(len(token_masks) / len(self.token_masks))
+
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "static ACTION_MASK: [u128; {}] = [", len(self.mask_list))
-        for i, mask in enumerate(self.mask_list):
-            self.write(1, "// {}. tokens: {}", i,
-                       ' '.join("{},".format(t) for t, m in zip(self.terminals, mask) if m == "1"))
-            self.write(1, "0b{},", mask)
-            if i < len(self.mask_list) - 1:
-                self.write(0, "")
+        self.write(0, "const MASKS_PER_TOKEN: usize = {};", masks_per_token)
+        self.write(0, "")
+        self.write(0, "#[rustfmt::skip]")
+        self.write(0, "const TOKEN_MASKS: [u{}; {}] = [", bits, len(token_masks))
+        for i, masks in enumerate(token_masks):
+            if i % masks_per_token == 0:
+                if i > 0:
+                    self.write(0, "")
+                tok = int(i / masks_per_token)
+                self.write(1, "// {}. token: {}", tok, self.terminals[tok])
+                self.write(1, "// masks: {}", ', '.join([str(i) for i, b in enumerate(reversed(self.token_masks[tok])) if b == '1']))
+
+            self.write(1, "0b{},", masks)
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "static ACTIONS_TABLE: [u32; {}] = [", len(self.transition_list))
+        self.write(0, "const ACTIONS: [u32; {}] = [", len(self.transition_list))
         state_id = 0
         for i, transition in enumerate(self.transition_list):
             # IF we are reaching the entry for a given state, add a comment.
-            if state_id * self.transitions_per_state + self.state_index[state_id] == i:
+            if self.state_index[state_id] == i:
                 self.write(1, "// {}. {}", state_id, self.states[state_id].traceback() or "<empty>")
                 state_id += 1
-            self.write(1, "(({} << 31) as u32) | (({} << 16) as u32) | (({} as i16) as u16 as u32),",
-                       1 if transition.kind == "Sequence" else 0,
-                       transition.mask,
-                       transition.state)
+            # self.write(1, "({} << 31) | ({} << 16) | ({}i16 as u16 as u32),",
+            #            '1' if transition.kind == "Sequence" else '0',
+            #            transition.mask,
+            #            transition.state if transition.state != ACCEPT else '-0x7fff')
+            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32),",
+                       int(transition.mask / bits),
+                       '1' if transition.kind == "Sequence" else '0',
+                       transition.mask % bits,
+                       transition.state if transition.state != ACCEPT else '-0x7fff')
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "static ACTION_IDX: [i8; {}] = [", len(self.state_index))
+        self.write(0, "const ACTION_IDX: [u16; {}] = [", len(self.state_index))
         for i, offset in enumerate(self.state_index):
             self.write(1, "{},", offset)
-        self.write(0, "];")
-        self.write(0, "")
-        self.write(0, "#[rustfmt::skip]")
-        self.write(0, "static ACTIONS: [i64; {}] = [",
-                   len(self.states) * len(self.terminals))
-        for i, state in enumerate(self.states):
-            self.write(1, "// {}. {}", i, state.traceback() or "<empty>")
-            self.write(1, "{}",
-                       ' '.join("{},".format(state.action_row.get(t, "ERROR")) for t in self.terminals))
-            if i < len(self.states) - 1:
-                self.write(0, "")
         self.write(0, "];")
         self.write(0, "")
 
@@ -273,7 +301,7 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
 
-        self.write(0, "static STATE_TO_ERROR_CODE: [Option<ErrorCode>; {}] = [",
+        self.write(0, "const STATE_TO_ERROR_CODE: [Option<ErrorCode>; {}] = [",
                    len(self.states))
         for i, state in enumerate(self.states):
             self.write(1, "// {}. {}", i, state.traceback() or "<empty>")
@@ -412,7 +440,7 @@ class RustParserWriter:
 
     def goto(self):
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "static GOTO: [u16; {}] = [",
+        self.write(0, "const GOTO: [u16; {}] = [",
                    len(self.states) * len(self.nonterminals))
         for state in self.states:
             row = state.ctn_row
@@ -544,7 +572,7 @@ class RustParserWriter:
 
     def reduce_simulator(self):
         prods = [prod for prod in self.prods if prod.nt in self.nonterminals]
-        self.write(0, "static REDUCE_SIMULATOR: [(usize, NonterminalId); {}] = [", len(prods))
+        self.write(0, "const REDUCE_SIMULATOR: [(usize, NonterminalId); {}] = [", len(prods))
         for prod in prods:
             elements = [e for e in prod.rhs if is_concrete_element(e)]
             self.write(1, "({}, NonterminalId::{}),", len(elements), self.nonterminal_to_camel(prod.nt))
@@ -555,7 +583,10 @@ class RustParserWriter:
         self.write(0, "#[derive(Clone, Copy)]")
         self.write(0, "pub struct ParserTables<'a> {")
         self.write(1, "pub state_count: usize,")
-        self.write(1, "pub action_table: &'a [i64],")
+        self.write(1, "pub masks_per_token: usize,")
+        self.write(1, "pub token_masks: &'a [u{}],", self.masks_bits)
+        self.write(1, "pub action_table: &'a [u32],")
+        self.write(1, "pub action_idx: &'a [u16],")
         self.write(1, "pub action_width: usize,")
         self.write(1, "pub error_codes: &'a [Option<ErrorCode>],")
         self.write(1, "pub reduce_simulator: &'a [(usize, NonterminalId)],")
@@ -566,18 +597,17 @@ class RustParserWriter:
 
         self.write(0, "impl<'a> ParserTables<'a> {")
         self.write(1, "pub fn check(&self) {")
-        self.write(2, "assert_eq!(")
-        self.write(3, "self.action_table.len(),")
-        self.write(3, "(self.state_count * self.action_width) as usize")
-        self.write(2, ");")
         self.write(2, "assert_eq!(self.goto_table.len(), (self.state_count * self.goto_width) as usize);")
         self.write(1, "}")
         self.write(0, "}")
         self.write(0, "")
 
-        self.write(0, "pub static TABLES: ParserTables<'static> = ParserTables {")
+        self.write(0, "pub const TABLES: ParserTables<'static> = ParserTables {")
         self.write(1, "state_count: {},", len(self.states))
+        self.write(1, "masks_per_token: MASKS_PER_TOKEN,")
+        self.write(1, "token_masks: &TOKEN_MASKS,")
         self.write(1, "action_table: &ACTIONS,")
+        self.write(1, "action_idx: &ACTION_IDX,")
         self.write(1, "action_width: {},", len(self.terminals))
         self.write(1, "error_codes: &STATE_TO_ERROR_CODE,")
         self.write(1, "reduce_simulator: &REDUCE_SIMULATOR,")
