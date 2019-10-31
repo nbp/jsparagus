@@ -274,15 +274,12 @@ class RustParserWriter:
             if self.state_index[state_id] == i:
                 self.write(1, "// {}. {}", state_id, self.states[state_id].traceback() or "<empty>")
                 state_id += 1
-            # self.write(1, "({} << 31) | ({} << 16) | ({}i16 as u16 as u32),",
-            #            '1' if transition.kind == "Sequence" else '0',
-            #            transition.mask,
-            #            transition.state if transition.state != ACCEPT else '-0x7fff')
-            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32),",
+            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32), // mask: {}",
                        int(transition.mask / bits),
                        '1' if transition.kind == "Sequence" else '0',
                        transition.mask % bits,
-                       transition.state if transition.state != ACCEPT else '-0x7fff')
+                       transition.state if transition.state != ACCEPT else '-0x7fff',
+                       transition.mask)
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")

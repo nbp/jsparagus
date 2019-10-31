@@ -2,11 +2,11 @@ use generated_parser::{
     reduce, AstBuilder, ErrorCode, ParseError, Result, StackValue, TerminalId, Token, TABLES,
 };
 
-const ACCEPT: i64 = -0x7fff_ffff_ffff_ffff;
-const ERROR: i64 = ACCEPT - 1;
+const ACCEPT: i16 = -0x7fff;
+const ERROR: i16 = ACCEPT - 1;
 
-#[derive(Clone, Copy)]
-struct Action(i64);
+#[derive(Clone, Copy, Debug)]
+struct Action(i16);
 
 impl Action {
     fn is_shift(self) -> bool {
@@ -66,7 +66,50 @@ impl<'alloc> Parser<'alloc> {
         let t = t as usize;
         debug_assert!(t < TABLES.action_width);
         debug_assert!(state < TABLES.state_count);
-        Action(TABLES.action_table[state * TABLES.action_width + t])
+        let start = TABLES.action_idx[state] as usize;
+        let end = TABLES.action_idx[state + 1] as usize;
+        let token_masks_start = t * TABLES.masks_per_token;
+        let token_masks_end = token_masks_start + TABLES.masks_per_token;
+        let token_masks = &TABLES.token_masks[token_masks_start..token_masks_end];
+
+        //println!("state: {:?} + {:?}", state, t);
+        let mut result : i16 = 0;
+        for code in &TABLES.action_table[start..end] {
+            let code = *code as i32;
+            let mut map_to = (code & 0xffff) as i16; // drop mode bits and sign-extend.
+            let mode = ((code >> 8) as i16) >> 15; // sign-extend.
+
+            // If the mask index refered by the action table exists also in the
+            // token_masks index, then set mask_new to 0xffff and 0 otherwise.
+            let mask_bit = code.to_be_bytes()[1] & 0x7f;
+            let mask_idx = code.to_be_bytes()[0] as usize;
+            let mask = token_masks[mask_idx];
+            let mask_set = (mask >> mask_bit) & 1;
+            let mask_val = !((mask_set as i16) - 1);
+
+            // mode is a sequence or repeat. A sequence would add the
+            // terminal id to the destination state, while repeat would only
+            // return the same destination state for all terminal id.
+            //
+            // Sequence (= 0b1) is useful in case each state is produced
+            // one after the other, and generated in the order of the
+            // terminal id.
+            //
+            // Repeat (= 0b0) is useful in case of a reduce state where
+            // most tokens will reduce the current stack to a non-terminal,
+            // which is most likely the same non-terminal independently of
+            // the terminal.
+            map_to += mode & (t as i16);
+
+            // This works because token_masks are disjoint patterns. Ensuring
+            // that only one will match.
+            result += map_to & mask_val;
+        }
+        if result == 0 {
+            result = ERROR;
+        }
+        //println!("  to state: {:?}", result);
+        return Action(result);
     }
 
     fn reduce_all(&mut self, t: TerminalId) -> Result<'alloc, Action> {
