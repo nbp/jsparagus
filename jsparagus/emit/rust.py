@@ -36,9 +36,9 @@ FALLIBLE_METHOD_NAMES = {
 class ActionKind:
     """Store the compressed action kinds to be stored instead of the transition
     list."""
-    def __init__(self, kind, mask, state):
+    def __init__(self, kind, match, state):
         self.kind = kind
-        self.mask = mask
+        self.match = match
         self.state = state
 
 class RustParserWriter:
@@ -53,54 +53,66 @@ class RustParserWriter:
         self.nonterminals = list(OrderedSet(
             nt for state in self.states for nt in state.ctn_row))
 
-    def compress_actions(self):
-        """Actions are a mapping of (state, terminal) to another state. However,
-        it is highly redundant and can be compressed. Compression is useful to
-        reduce the number of data cache misses while looking up the state
-        transition.
+        # Size in bits of the elements produced by compress_map2
+        self.matches_elem_size = 8
+        self.map_elem_size = 32
+        self.idx_elem_size = 16
 
-        Each action has multiple forms of redundancy. The redundancy appears
-        either as the same state transition (repeated state numbers) or as a
-        sequence of incrementing state numbers.
+    def compress_map2(self, list1, list2, map_fun, default):
+        """This function compresses a 2 indexes map which has some property:
+         - has a most frequent result (default).
+         - non-default values are frequently repeated for the second index.
+         - non-default values are frequently offset with the second index.
 
-        Some of the repeated patterns also appear in multiple times in
-        different states. For example, the terminal `{` is frequently used as a
-        terminal and appears in multiple state transitions. Thus a pattern
-        matching all terminals expected by this state transition can be shared
-        for each state.
+        This function compresses this data given the previous hypothesis by
+        implementing the default value in the code, using bit masks to identify
+        non-default values, and identify whether the we have repeated values or
+        mapped values which are offset by the second index.
 
-        This function detects known forms of redundancy and attempts at
-        encoding these efficiently, as well as generating all the data
-        necessary for decoding it.
+        This function produces multiple arrays:
+         - An array to find the offset of the data corresponding to the first
+           index.
+         - An array which contains a map of the first index to mask identifier,
+           and the matching mapped value.
+         - An array to find the mask identifer corresponding to the second
+           index.
 
+        The mask identifer, while being concrete in the compression algorithm
+        no longer appear in the generated content, and only appears as
+        identifiers which are in common in both arrays.
+
+        A decompression algorithm will look-up mask identifers for both the
+        first index, and the second index, and the unique mask identifier which
+        is in common will identify the result of the map.
         """
-        state_index = []
-        transition_list = []
+        e1_index = []
+        e1_map = []
         mask_dict = {}
         mask_list = []
-        for i, state in enumerate(self.states):
-            state_index.append(len(transition_list))
-            transition_table_ref = [state.action_row.get(t, -math.inf) for t in self.terminals]
-            filtered = [t == -math.inf for t in transition_table_ref]
+        for i, e1 in enumerate(list1):
+            e1_index.append(len(e1_map))
+            e1e2_map_ref = [map_fun(e1)(e2) for e2 in list2]
+            filtered = [t == default for t in e1e2_map_ref]
 
-            stash_transition_list = []
+            stash_e1_map = []
             while filtered.count(False) > 0:
-                transition_table = [ (-math.inf if f else s) for s, f in zip(transition_table_ref, filtered) ]
-                # Identify sequences of transitions by substracting the index,
-                # by substracting the index, we get the offset at the origin.
-                # If multiple state transition have the same offset at the
-                # origin, then we can create a sequence mask.
-                sequence_table = [ s - i for i, s in enumerate(transition_table) ]
-                state_counts = Counter(transition_table)
-                seq_counts = Counter(sequence_table)
-                del state_counts[-math.inf]
-                del seq_counts[-math.inf]
-                state, state_count = state_counts.most_common(1)[0]
+                e1e2_map = [ (default if f else s) for s, f in zip(e1e2_map_ref, filtered) ]
+                # Identify cases where the result is offseted by the second
+                # index by substracting the second index from the result.
+                sequence_map = [ s - i for i, s in enumerate(e1e2_map) ]
+                # Check which pattern is the most frequent, repeated value or
+                # offseted values.
+                res_counts = Counter(e1e2_map)
+                seq_counts = Counter(sequence_map)
+                del res_counts[default]
+                del seq_counts[default]
+                res, res_count = res_counts.most_common(1)[0]
                 seq, seq_count = seq_counts.most_common(1)[0]
-                if state_count >= seq_count:
-                    mask = [ state == s for s in transition_table ]
+                # Create a new bit mask corresponding of the most frequent pattern.
+                if res_count >= seq_count:
+                    mask = [ res == s for s in e1e2_map ]
                 else:
-                    mask = [ seq == s - i for i, s in enumerate(transition_table) ]
+                    mask = [ seq == s - i for i, s in enumerate(e1e2_map) ]
 
                 # Reverse the bit string as low bits are written last.
                 mask_str = ''.join(reversed([ str(int(b)) for b in mask ]))
@@ -112,39 +124,27 @@ class RustParserWriter:
                     mask_dict[mask_str] = { 'reg_idx' : mask_idx, 'new_idx': 0, 'count': 1 }
                     mask_list.append(mask_str)
 
-                if state_count >= seq_count:
-                    stash_transition_list.append(ActionKind('Repeat', mask_idx, state))
+                if res_count >= seq_count:
+                    stash_e1_map.append(ActionKind('Repeat', mask_idx, res))
                 else:
-                    stash_transition_list.append(ActionKind('Sequence', mask_idx, seq))
+                    stash_e1_map.append(ActionKind('Sequence', mask_idx, seq))
 
                 filtered = [ m or f for m, f in zip(mask, filtered) ]
 
-            stash_transition_list.sort(key = lambda x: x.mask)
-            transition_list = transition_list + stash_transition_list
+            stash_e1_map.sort(key = lambda x: x.match)
+            e1_map = e1_map + stash_e1_map
 
-        # Sort masks based on the number of time they are reused, such that the
-        # first mask to match are encountered first.
+        # A mask corresponds to the set of values of the second index.
+        # However, when decoding we want to be able to lookup the mask ahead,
+        # thus considering this array as a matrix, we transpose the matrix to
+        # lookup mask identifier from the second index.
+        e2_match = [''.join(reversed([ m[-1 - t] for m in mask_list ])) for t, _ in enumerate(list2)]
 
-        # mask_list.sort(key = lambda m: -mask_dict[m]['count'])
-        # mask_map = [ 0 for _ in mask_list ]
-        # for idx, mask in enumerate(mask_list):
-        #     mask_dict[mask]['new_idx'] = idx
-        #     mask_map[mask_dict[mask]['reg_idx']] = idx
-        # for act in transition_list:
-        #     act.mask = mask_map[act.mask]
+        # End the array of offsets of the first indexes by the size of the
+        # array in order to avoid bounds checking when decoding.
+        e1_index.append(len(e1_map))
 
-        # Invert the mask to change from `table[mask] = token-list`, to be a
-        # `table[token] = mask-list`.
-        token_masks = [''.join(reversed([ m[-1 - t] for m in mask_list ])) for t, _ in enumerate(self.terminals)]
-
-        # The state_index contains absolute indexes to the transition_table.
-        # However, to make the encoding of the state_index vector smaller, by
-        # using relative indexes.
-        state_index.append(len(transition_list))
-        self.transition_list = transition_list
-        self.state_index = state_index
-        self.token_masks = token_masks
-        self.mask_list = mask_list
+        return (mask_list, e1_map, e2_match, e1_index)
 
     def emit(self):
         self.header()
@@ -173,6 +173,15 @@ class RustParserWriter:
         self.write(0, "use crate::ast_builder::AstBuilder;")
         self.write(0, "use crate::stack_value_generated::{StackValue, TryIntoStack};")
         self.write(0, "use crate::error::Result;")
+        self.write(0, "")
+        self.write(0, "// Structure data produced by write_compress_map2 python function.")
+        self.write(0, "#[derive(Clone, Copy)]")
+        self.write(0, "pub struct DualIndexMap<'a> {")
+        self.write(1, "pub matches_per_e2: usize,")
+        self.write(1, "pub e2_matches: &'a [u{}],", self.matches_elem_size)
+        self.write(1, "pub e1_map: &'a [u{}],", self.map_elem_size)
+        self.write(1, "pub e1_idx: &'a [u{}],", self.idx_elem_size)
+        self.write(0, "}")
         self.write(0, "")
 
     def terminal_name(self, value):
@@ -237,57 +246,76 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
 
-    def actions(self):
-        self.compress_actions()
-        # Split the token masks by u64, such that we can load parts of the
-        # mask-bits.
-        bits = 32
-        self.masks_bits = bits
-        token_masks = []
-        for masks in self.token_masks:
-            while masks != '':
-                token_masks.append(masks[-bits:])
-                masks = masks[:-bits]
-        masks_per_token = int(len(token_masks) / len(self.token_masks))
+    def write_compressed_map2(self, name1, name2, lit1, lit2, list1, list2, map_fun, default):
+        (masks, e1_map, e2_match, e1_index) = self.compress_map2(list1, list2, map_fun, default)
+        bits = self.matches_elem_size
+
+        # Split matches by the number of bits used to encode them.
+        self.matches_bits = bits
+        e2_enc_matches = []
+        for matches in e2_match:
+            while matches != '':
+                e2_enc_matches.append(matches[-bits:])
+                matches = matches[:-bits]
+        matches_per_elem = int(len(e2_enc_matches) / len(e2_match))
 
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const MASKS_PER_TOKEN: usize = {};", masks_per_token)
+        self.write(0, "const MATCHES_PER_{}: usize = {};", name2, matches_per_elem)
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const TOKEN_MASKS: [u{}; {}] = [", bits, len(token_masks))
-        for i, masks in enumerate(token_masks):
-            if i % masks_per_token == 0:
+        self.write(0, "const {}_MATCHES: [u{}; {}] = [", name2, bits, len(e2_enc_matches))
+        for i, matches in enumerate(e2_enc_matches):
+            if i % matches_per_elem == 0:
                 if i > 0:
                     self.write(0, "")
-                tok = int(i / masks_per_token)
-                self.write(1, "// {}. token: {}", tok, self.terminals[tok])
-                self.write(1, "// masks: {}", ', '.join([str(i) for i, b in enumerate(reversed(self.token_masks[tok])) if b == '1']))
+                e2 = int(i / matches_per_elem)
+                self.write(1, "// {}. entry: {}", e2, lit2(e2))
+                self.write(1, "// matches: {}", ', '.join([str(i) for i, b in enumerate(reversed(e2_match[e2])) if b == '1']))
 
-            self.write(1, "0b{},", masks)
+            self.write(1, "0b{},", matches)
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const ACTIONS: [u32; {}] = [", len(self.transition_list))
-        state_id = 0
-        for i, transition in enumerate(self.transition_list):
+        self.write(0, "const {}_MAP: [u{}; {}] = [", name1, self.map_elem_size, len(e1_map))
+        e1 = 0
+        for i, map_to in enumerate(e1_map):
             # IF we are reaching the entry for a given state, add a comment.
-            if self.state_index[state_id] == i:
-                self.write(1, "// {}. {}", state_id, self.states[state_id].traceback() or "<empty>")
-                state_id += 1
-            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32), // mask: {}",
-                       int(transition.mask / bits),
-                       '1' if transition.kind == "Sequence" else '0',
-                       transition.mask % bits,
-                       transition.state if transition.state != ACCEPT else '-0x7fff',
-                       transition.mask)
+            while e1_index[e1] == i:
+                if i > 0:
+                    self.write(0, "")
+                self.write(1, "// {}. {}", e1, lit1(e1))
+                e1 += 1
+            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32), // match: {}",
+                       int(map_to.match / bits),
+                       '1' if map_to.kind == "Sequence" else '0',
+                       map_to.match % bits,
+                       map_to.state,
+                       map_to.match)
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const ACTION_IDX: [u16; {}] = [", len(self.state_index))
-        for i, offset in enumerate(self.state_index):
+        self.write(0, "const {}_IDX: [u{}; {}] = [", name1, self.idx_elem_size, len(e1_index))
+        for offset in e1_index:
             self.write(1, "{},", offset)
         self.write(0, "];")
         self.write(0, "")
+
+
+    def actions(self):
+        def get_st(s, t):
+            v = s.action_row.get(t, -math.inf)
+            if v != ACCEPT:
+                return v
+            return -0x7fff
+
+        self.write_compressed_map2(
+            "ACTION", "TOKEN",
+            lambda s: self.states[s].traceback() or "<empty>",
+            lambda t: self.terminals[t],
+            self.states, self.terminals,
+            lambda s: lambda t: get_st(s, t),
+            -math.inf
+        )
 
     def error_codes(self):
         self.write(0, "#[derive(Clone, Debug, PartialEq)]")
@@ -436,15 +464,24 @@ class RustParserWriter:
         self.write(0, "")
 
     def goto(self):
-        self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const GOTO: [u16; {}] = [",
-                   len(self.states) * len(self.nonterminals))
-        for state in self.states:
-            row = state.ctn_row
-            self.write(1, "{}", ' '.join("{},".format(row.get(nt, 0))
-                                         for nt in self.nonterminals))
-        self.write(0, "];")
-        self.write(0, "")
+        self.write_compressed_map2(
+            "GOTO", "NONTERMINAL",
+            lambda s: self.states[s].traceback() or "<empty>",
+            lambda nt: self.nonterminal_to_camel(self.nonterminals[nt]),
+            self.states, self.nonterminals,
+            lambda s: lambda nt: s.ctn_row.get(nt, 0),
+            0
+        )
+
+        # self.write(0, "#[rustfmt::skip]")
+        # self.write(0, "const GOTO: [u16; {}] = [",
+        #            len(self.states) * len(self.nonterminals))
+        # for state in self.states:
+        #     row = state.ctn_row
+        #     self.write(1, "{}", ' '.join("{},".format(row.get(nt, 0))
+        #                                  for nt in self.nonterminals))
+        # self.write(0, "];")
+        # self.write(0, "")
 
     def element_type(self, e):
         # Mostly duplicated from types.py. :(
@@ -579,37 +616,44 @@ class RustParserWriter:
     def entry(self):
         self.write(0, "#[derive(Clone, Copy)]")
         self.write(0, "pub struct ParserTables<'a> {")
-        self.write(1, "pub state_count: usize,")
-        self.write(1, "pub masks_per_token: usize,")
-        self.write(1, "pub token_masks: &'a [u{}],", self.masks_bits)
-        self.write(1, "pub action_table: &'a [u32],")
-        self.write(1, "pub action_idx: &'a [u16],")
-        self.write(1, "pub action_width: usize,")
+        self.write(1, "pub action_token: DualIndexMap<'a>,")
         self.write(1, "pub error_codes: &'a [Option<ErrorCode>],")
         self.write(1, "pub reduce_simulator: &'a [(usize, NonterminalId)],")
-        self.write(1, "pub goto_table: &'a [u16],")
-        self.write(1, "pub goto_width: usize,")
+        self.write(1, "pub goto_nt: DualIndexMap<'a>,")
+        self.write(1, "pub state_count: usize,")
+        self.write(1, "pub terminals_count: usize,")
+        self.write(1, "pub nonterminals_count: usize,")
         self.write(0, "}")
         self.write(0, "")
 
         self.write(0, "impl<'a> ParserTables<'a> {")
         self.write(1, "pub fn check(&self) {")
-        self.write(2, "assert_eq!(self.goto_table.len(), (self.state_count * self.goto_width) as usize);")
+        self.write(2, "assert_eq!(self.action_token.e1_idx.len(), self.state_count + 1);")
+        self.write(2, "assert_eq!(self.action_token.e2_matches.len(), self.terminals_count * self.action_token.matches_per_e2);")
+        self.write(2, "assert_eq!(self.goto_nt.e1_idx.len(), self.state_count + 1);")
+        self.write(2, "assert_eq!(self.goto_nt.e2_matches.len(), self.nonterminals_count * self.goto_nt.matches_per_e2);")
         self.write(1, "}")
         self.write(0, "}")
         self.write(0, "")
 
         self.write(0, "pub const TABLES: ParserTables<'static> = ParserTables {")
-        self.write(1, "state_count: {},", len(self.states))
-        self.write(1, "masks_per_token: MASKS_PER_TOKEN,")
-        self.write(1, "token_masks: &TOKEN_MASKS,")
-        self.write(1, "action_table: &ACTIONS,")
-        self.write(1, "action_idx: &ACTION_IDX,")
-        self.write(1, "action_width: {},", len(self.terminals))
+        self.write(1, "action_token: DualIndexMap {")
+        self.write(2, "matches_per_e2: MATCHES_PER_TOKEN,")
+        self.write(2, "e2_matches: &TOKEN_MATCHES,")
+        self.write(2, "e1_map: &ACTION_MAP,")
+        self.write(2, "e1_idx: &ACTION_IDX,")
+        self.write(1, "},")
         self.write(1, "error_codes: &STATE_TO_ERROR_CODE,")
         self.write(1, "reduce_simulator: &REDUCE_SIMULATOR,")
-        self.write(1, "goto_table: &GOTO,")
-        self.write(1, "goto_width: {},".format(len(self.nonterminals)))
+        self.write(1, "goto_nt: DualIndexMap {")
+        self.write(2, "matches_per_e2: MATCHES_PER_NONTERMINAL,")
+        self.write(2, "e2_matches: &NONTERMINAL_MATCHES,")
+        self.write(2, "e1_map: &GOTO_MAP,")
+        self.write(2, "e1_idx: &GOTO_IDX,")
+        self.write(1, "},")
+        self.write(1, "state_count: {},", len(self.states))
+        self.write(1, "terminals_count: {},", len(self.terminals))
+        self.write(1, "nonterminals_count: {},".format(len(self.nonterminals)))
         self.write(0, "};")
         self.write(0, "")
 

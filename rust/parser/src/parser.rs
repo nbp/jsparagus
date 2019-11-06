@@ -1,5 +1,5 @@
 use generated_parser::{
-    reduce, AstBuilder, ErrorCode, ParseError, Result, StackValue, TerminalId, Token, TABLES,
+    reduce, AstBuilder, DualIndexMap, ErrorCode, NonterminalId, ParseError, Result, StackValue, TerminalId, Token, TABLES,
 };
 
 const ACCEPT: i16 = -0x7fff;
@@ -42,6 +42,58 @@ pub struct Parser<'alloc> {
     handler: AstBuilder<'alloc>,
 }
 
+// This function attempt to resolve a dual entry lookup over compressed data.
+// It is similar to resolving table[entry1][entry2] on a spare table.
+//
+// It works by having table_map[entry1] and table_match[entry2] which are then
+// checked one against the other.
+fn dual_map<'a>(dim: DualIndexMap<'a>, e1: usize, e2: usize, default: i16) -> i16 {
+    let start = dim.e1_idx[e1] as usize;
+    let end = dim.e1_idx[e1 + 1] as usize;
+    let e1_slice = &dim.e1_map[start..end];
+    let e2_start = e2 * dim.matches_per_e2;
+    let e2_end = e2_start + dim.matches_per_e2;
+    let e2_slice = &dim.e2_matches[e2_start..e2_end];
+    let e2 = e2 as i16;
+
+    let mut result : i16 = 0;
+    for code in e1_slice {
+        let code = *code as i32;
+        let mut map_to = (code & 0xffff) as i16; // drop mode bits and sign-extend.
+        let mode = ((code >> 8) as i16) >> 15; // sign-extend.
+
+        // If the mask index refered by the action table exists also in the
+        // token_masks index, then set mask_new to 0xffff and 0 otherwise.
+        let mask_bit = code.to_be_bytes()[1] & 0x7f;
+        let mask_idx = code.to_be_bytes()[0] as usize;
+        let mask = e2_slice[mask_idx];
+        let mask_set = (mask >> mask_bit) & 1;
+        let mask_val = !((mask_set as i16) - 1);
+
+        // mode is a sequence or repeat. A sequence would add the
+        // terminal id to the destination state, while repeat would only
+        // return the same destination state for all terminal id.
+        //
+        // Sequence (= 0b1) is useful in case each state is produced
+        // one after the other, and generated in the order of the
+        // terminal id.
+        //
+        // Repeat (= 0b0) is useful in case of a reduce state where
+        // most tokens will reduce the current stack to a non-terminal,
+        // which is most likely the same non-terminal independently of
+        // the terminal.
+        map_to += mode & e2;
+
+        // This works because token_masks are disjoint patterns. Ensuring
+        // that only one will match.
+        result += map_to & mask_val;
+    }
+    if result == 0 {
+        result = default;
+    }
+    result
+}
+
 impl<'alloc> Parser<'alloc> {
     pub fn new(handler: AstBuilder<'alloc>, entry_state: usize) -> Self {
         TABLES.check();
@@ -64,52 +116,17 @@ impl<'alloc> Parser<'alloc> {
 
     fn action_at_state(&self, t: TerminalId, state: usize) -> Action {
         let t = t as usize;
-        debug_assert!(t < TABLES.action_width);
+        debug_assert!(t < TABLES.terminals_count);
         debug_assert!(state < TABLES.state_count);
-        let start = TABLES.action_idx[state] as usize;
-        let end = TABLES.action_idx[state + 1] as usize;
-        let token_masks_start = t * TABLES.masks_per_token;
-        let token_masks_end = token_masks_start + TABLES.masks_per_token;
-        let token_masks = &TABLES.token_masks[token_masks_start..token_masks_end];
+        Action(dual_map(TABLES.action_token, state, t, ERROR))
+    }
 
-        //println!("state: {:?} + {:?}", state, t);
-        let mut result : i16 = 0;
-        for code in &TABLES.action_table[start..end] {
-            let code = *code as i32;
-            let mut map_to = (code & 0xffff) as i16; // drop mode bits and sign-extend.
-            let mode = ((code >> 8) as i16) >> 15; // sign-extend.
-
-            // If the mask index refered by the action table exists also in the
-            // token_masks index, then set mask_new to 0xffff and 0 otherwise.
-            let mask_bit = code.to_be_bytes()[1] & 0x7f;
-            let mask_idx = code.to_be_bytes()[0] as usize;
-            let mask = token_masks[mask_idx];
-            let mask_set = (mask >> mask_bit) & 1;
-            let mask_val = !((mask_set as i16) - 1);
-
-            // mode is a sequence or repeat. A sequence would add the
-            // terminal id to the destination state, while repeat would only
-            // return the same destination state for all terminal id.
-            //
-            // Sequence (= 0b1) is useful in case each state is produced
-            // one after the other, and generated in the order of the
-            // terminal id.
-            //
-            // Repeat (= 0b0) is useful in case of a reduce state where
-            // most tokens will reduce the current stack to a non-terminal,
-            // which is most likely the same non-terminal independently of
-            // the terminal.
-            map_to += mode & (t as i16);
-
-            // This works because token_masks are disjoint patterns. Ensuring
-            // that only one will match.
-            result += map_to & mask_val;
-        }
-        if result == 0 {
-            result = ERROR;
-        }
-        //println!("  to state: {:?}", result);
-        return Action(result);
+    fn goto_at_state(&self, nt : NonterminalId, state: usize) -> usize {
+        // TABLES.goto_table[state * TABLES.goto_width + nt as usize] as usize
+        let nt = nt as usize;
+        debug_assert!(nt < TABLES.nonterminals_count);
+        debug_assert!(state < TABLES.state_count);
+        dual_map(TABLES.goto_nt, state, nt, 0) as usize
     }
 
     fn reduce_all(&mut self, t: TerminalId) -> Result<'alloc, Action> {
@@ -118,12 +135,10 @@ impl<'alloc> Parser<'alloc> {
         while action.is_reduce() {
             let prod_index = action.reduce_prod_index();
             let nt = reduce(&self.handler, prod_index, &mut self.node_stack)?;
-            debug_assert!((nt as usize) < tables.goto_width);
             debug_assert!(self.state_stack.len() >= self.node_stack.len());
             self.state_stack.truncate(self.node_stack.len());
             let prev_state = *self.state_stack.last().unwrap();
-            let state_after =
-                tables.goto_table[prev_state * tables.goto_width + nt as usize] as usize;
+            let state_after = self.goto_at_state(nt, prev_state);
             debug_assert!(state_after < tables.state_count);
             self.state_stack.push(state_after);
             action = self.action(t);
@@ -234,11 +249,10 @@ impl<'alloc> Parser<'alloc> {
         while action.is_reduce() {
             let prod_index = action.reduce_prod_index();
             let (num_pops, nt) = TABLES.reduce_simulator[prod_index];
-            debug_assert!((nt as usize) < TABLES.goto_width);
             debug_assert!(self.state_stack.len() >= self.node_stack.len());
             sp = sp - num_pops;
             let prev_state = self.state_stack[sp];
-            state = TABLES.goto_table[prev_state * TABLES.goto_width + nt as usize] as usize;
+            state = self.goto_at_state(nt, prev_state);
             debug_assert!(state < TABLES.state_count);
             sp += 1;
             action = self.action_at_state(t, state);
