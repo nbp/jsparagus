@@ -6,6 +6,7 @@ use std::fs;
 use std::io;
 use std::io::prelude::*; // flush() at least
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use ast::{self, types::Program};
 use bumpalo::Bump;
@@ -19,6 +20,7 @@ pub struct DemoStats {
 
     /// Total size of all the files attempted, in bytes.
     total_bytes: u64,
+    time: Duration,
 }
 
 impl DemoStats {
@@ -26,11 +28,12 @@ impl DemoStats {
         DemoStats::default()
     }
 
-    pub fn new_single(size_bytes: u64, success: bool) -> DemoStats {
+    pub fn new_single(size_bytes: u64, success: bool, time: Duration) -> DemoStats {
         DemoStats {
             files_attempted: 1,
             files_parsed: if success { 1 } else { 0 },
             total_bytes: size_bytes,
+            time
         }
     }
 
@@ -38,6 +41,31 @@ impl DemoStats {
         self.files_attempted += other.files_attempted;
         self.files_parsed += other.files_parsed;
         self.total_bytes += other.total_bytes;
+        self.time += other.time;
+    }
+}
+
+/// Completely fill the cache with content which is useless to the Parser in
+/// order to see how good the parser code performs when the cache is polluted by
+/// other processes executed by the browser.
+#[inline(never)]
+fn trash_caches()
+{
+    let asso = 16;
+    let sets = 8192;
+    let line = 64;
+    let size = asso * sets * line;
+    let mut vec = vec![0u8; size];
+    let mut i = 0;
+    let mut x = 0;
+    while vec[i] != 17 {
+        x = vec[i] ^ x;
+        vec[i] += 1;
+        let v = vec[i] as usize * line;
+        i = (i + v) % size;
+    }
+    if x != 0xff && x != 0 {
+        println!("Whoa, we found x = {:?}", x);
     }
 }
 
@@ -51,18 +79,25 @@ fn parse_file(path: &Path, size_bytes: u64) -> io::Result<DemoStats> {
     let contents = match fs::read_to_string(path) {
         Err(err) => {
             println!(" error reading file: {}", err);
-            return Ok(DemoStats::new_single(size_bytes, false));
+            return Ok(DemoStats::new_single(size_bytes, false, Duration::default()));
         }
         Ok(s) => s,
     };
-    let allocator = &Bump::new();
-    let result = parse_script(allocator, &contents);
-    let stats = DemoStats::new_single(size_bytes, result.is_ok());
-    match result {
-        Ok(_ast) => println!(" ok"),
-        Err(err) => println!(" error: {}", err.message()),
+    loop {
+        trash_caches();
+        let time = SystemTime::now();
+        let allocator = &Bump::new();
+        let result = parse_script(allocator, &contents);
+        let time = match time.elapsed() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        match &result {
+            Ok(_ast) => println!(" ok"),
+            Err(err) => println!(" error: {}", err.message()),
+        }
+        return Ok(DemoStats::new_single(size_bytes, result.is_ok(), time))
     }
-    Ok(stats)
 }
 
 /// Try parsing all the files in a directory, recursively.
