@@ -55,7 +55,7 @@ class RustParserWriter:
 
         # Size in bits of the elements produced by compress_map2
         self.matches_elem_size = 8
-        self.map_elem_size = 32
+        self.map_elem_size = 8
         self.idx_elem_size = 16
 
     def compress_map2(self, list1, list2, map_fun, default):
@@ -276,27 +276,53 @@ class RustParserWriter:
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
-        self.write(0, "const {}_MAP: [u{}; {}] = [", name1, self.map_elem_size, len(e1_map))
-        e1 = 0
-        for i, map_to in enumerate(e1_map):
-            # IF we are reaching the entry for a given state, add a comment.
-            while e1_index[e1] == i:
-                if i > 0:
-                    self.write(0, "")
-                self.write(1, "// {}. {}", e1, lit1(e1))
-                e1 += 1
-            self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32), // match: {}",
-                       int(map_to.match / bits),
-                       '1' if map_to.kind == "Sequence" else '0',
-                       map_to.match % bits,
-                       map_to.state,
-                       map_to.match)
+        # self.write(0, "const {}_MAP: [u{}; {}] = [", name1, self.map_elem_size, len(e1_map))
+        # e1 = 0
+        # for i, map_to in enumerate(e1_map):
+        #     # IF we are reaching the entry for a given state, add a comment.
+        #     while e1_index[e1] == i:
+        #         if i > 0:
+        #             self.write(0, "")
+        #         self.write(1, "// {}. {}", e1, lit1(e1))
+        #         e1 += 1
+        #     self.write(1, "({} << 24) | ({} << 23) | ({} << 16) | ({}i16 as u16 as u32), // match: {}",
+        #                int(map_to.match / bits),
+        #                '1' if map_to.kind == "Sequence" else '0',
+        #                map_to.match % bits,
+        #                map_to.state,
+        #                map_to.match)
+        # self.write(0, "];")
+        self.write(0, "const {}_MAP: [u{}; {}] = [", name1, self.map_elem_size, 4 * len(e1_map))
+        for i, e1 in enumerate(list1):
+            start = e1_index[i]
+            end = e1_index[i + 1]
+            e1_slice = e1_map[start:end]
+            # Document content
+            self.write(1, "// {}. {}", i, lit1(i))
+            for map_to in e1_slice:
+                self.write(1, "//   match: {}, {} map to {}",
+                       map_to.match, map_to.kind, map_to.state)
+            if e1_slice == []:
+                continue
+            # Encode mask indexes.
+            match_indexes = ", ".join([str(int(m.match / bits)) for m in e1_slice])
+            self.write(1, "{},", match_indexes)
+            # Encode mask bits.
+            match_bits = ", ".join([str(int(m.match % bits)) for m in e1_slice])
+            self.write(1, "{},", match_bits)
+            # Encode mapped values.
+            def map_encode(m):
+                s = 0x80 if m.kind == "Sequence" else 0
+                return (str(s | ((m.state >> 8) & 0x7f)), str(m.state &0xff))
+            map_to = [v for m in e1_slice for v in map_encode(m)]
+            map_to = ", ".join(map_to)
+            self.write(1, "{},", map_to)
         self.write(0, "];")
         self.write(0, "")
         self.write(0, "#[rustfmt::skip]")
         self.write(0, "const {}_IDX: [u{}; {}] = [", name1, self.idx_elem_size, len(e1_index))
         for offset in e1_index:
-            self.write(1, "{},", offset)
+            self.write(1, "{},", 4 * offset)
         self.write(0, "];")
         self.write(0, "")
 
@@ -306,7 +332,7 @@ class RustParserWriter:
             v = s.action_row.get(t, -math.inf)
             if v != ACCEPT:
                 return v
-            return -0x7fff
+            return -0x3fff
 
         self.write_compressed_map2(
             "ACTION", "TOKEN",

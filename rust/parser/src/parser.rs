@@ -2,8 +2,8 @@ use generated_parser::{
     reduce, AstBuilder, DualIndexMap, ErrorCode, NonterminalId, ParseError, Result, StackValue, TerminalId, Token, TABLES,
 };
 
-const ACCEPT: i16 = -0x7fff;
-const ERROR: i16 = ACCEPT - 1;
+const ACCEPT: i16 = -0x3fff;
+const ERROR: i16 = -0x7fff - 1;
 
 #[derive(Clone, Copy, Debug)]
 struct Action(i16);
@@ -42,20 +42,151 @@ pub struct Parser<'alloc> {
     handler: AstBuilder<'alloc>,
 }
 
+struct I8x16(core::arch::x86_64::__m128i);
+impl std::fmt::Binary for I8x16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res: [i8;16] = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
+        unsafe {
+            use core::arch::x86_64::*; // To use SIMD.
+            _mm_storeu_si128(&mut res[0] as *mut i8 as *mut __m128i, self.0);
+        };
+        write!(f, "({:b},{:b},{:b},{:b}, {:b},{:b},{:b},{:b}, {:b},{:b},{:b},{:b}, {:b},{:b},{:b},{:b})",
+               res[0], res[1], res[2], res[3],
+               res[4], res[5], res[6], res[7],
+               res[8], res[9], res[10], res[11],
+               res[12], res[13], res[14], res[15],
+        )
+    }
+}
+impl std::fmt::LowerHex for I8x16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res: [i8;16] = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
+        unsafe {
+            use core::arch::x86_64::*; // To use SIMD.
+            _mm_storeu_si128(&mut res[0] as *mut i8 as *mut __m128i, self.0);
+        };
+        write!(f, "({:x},{:x},{:x},{:x}, {:x},{:x},{:x},{:x}, {:x},{:x},{:x},{:x}, {:x},{:x},{:x},{:x})",
+               res[0], res[1], res[2], res[3],
+               res[4], res[5], res[6], res[7],
+               res[8], res[9], res[10], res[11],
+               res[12], res[13], res[14], res[15],
+        )
+    }
+}
+impl std::fmt::Display for I8x16 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut res: [i8;16] = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0];
+        unsafe {
+            use core::arch::x86_64::*; // To use SIMD.
+            _mm_storeu_si128(&mut res[0] as *mut i8 as *mut __m128i, self.0);
+        };
+        write!(f, "({},{},{},{}, {},{},{},{}, {},{},{},{}, {},{},{},{})",
+               res[0], res[1], res[2], res[3],
+               res[4], res[5], res[6], res[7],
+               res[8], res[9], res[10], res[11],
+               res[12], res[13], res[14], res[15],
+        )
+    }
+}
 // This function attempt to resolve a dual entry lookup over compressed data.
 // It is similar to resolving table[entry1][entry2] on a spare table.
 //
 // It works by having table_map[entry1] and table_match[entry2] which are then
 // checked one against the other.
 fn dual_map<'a>(dim: DualIndexMap<'a>, e1: usize, e2: usize, default: i16) -> i16 {
-    let start = dim.e1_idx[e1] as usize;
-    let end = dim.e1_idx[e1 + 1] as usize;
-    let e1_slice = &dim.e1_map[start..end];
+    let e1_start = dim.e1_idx[e1] as usize;
+    let e1_end = dim.e1_idx[e1 + 1] as usize;
+    let e1_slice : &[u8]= &dim.e1_map[e1_start..e1_end];
     let e2_start = e2 * dim.matches_per_e2;
     let e2_end = e2_start + dim.matches_per_e2;
-    let e2_slice = &dim.e2_matches[e2_start..e2_end];
+    let e2_slice : &[u8] = &dim.e2_matches[e2_start..e2_end];
     let e2 = e2 as i16;
+    let e1_len = (e1_end - e1_start) / 4;
+    assert!(e1_len <= 16);
 
+    let index = unsafe {
+        use core::arch::x86_64::*; // To use SIMD.
+        // matches_per_token = 19, matches_per_nonterminal = 21
+        let e2s1 = _mm_lddqu_si128(&e2_slice[0] as *const u8 as *const __m128i); // e2_slices[0..16]
+        let e2s2 = _mm_lddqu_si128(&e2_slice[16] as *const u8 as *const __m128i); // e2_slices[16..32]
+        // Note: It is useless to remove parts which are out-side e2 slices, as these are read but not addressed.
+        //println!("\ne2s1 = {:b}", I8x16(e2s1));
+        //println!("e2s2 = {:b}", I8x16(e2s2));
+
+        // load e1 masks offsets, and split it in 2 to match the e2s1 range and the e2s2 range.
+        let e1_matchidx = _mm_lddqu_si128(&e1_slice[0] as *const u8 as *const __m128i); // e1_slices[0..16];
+        //println!("e1_matchidx = {}", I8x16(e1_matchidx));
+        let vsz = _mm_set1_epi8(16);
+        // A substraction will set the sign bit, which when used in pshufb will ignore the lookup and
+        // return 0.
+        let e1_matchidx_hi = _mm_sub_epi8(e1_matchidx, vsz);
+        // The substraction kept all the low bits identical. Using a xor swap the sign bit and make it
+        // usable with pshufb.
+        let sign = _mm_set1_epi8(0x80u8 as i8);
+        let e1_matchidx_lo = _mm_xor_si128(e1_matchidx_hi, sign);
+
+        // Compute the lookup of byte matches using the byte indexes.
+        // `for all e1: e2_slice[e1.mask_idx]`
+        let matchsets_hi = _mm_shuffle_epi8(e2s2, e1_matchidx_hi);
+        let matchsets_lo = _mm_shuffle_epi8(e2s1, e1_matchidx_lo);
+
+        // Compute a mask which is non-zero for all low values of match indexes.
+        let zero = _mm_setzero_si128();
+        let e1_pick_lo = _mm_min_epi8(e1_matchidx_hi, zero);
+
+        // Merge matchbits from low and high indexes.
+        let matchsets = _mm_blendv_epi8(matchsets_hi, matchsets_lo, e1_pick_lo);
+        //println!("matchsets = {:b}", I8x16(matchsets));
+
+        // c = shuffle(vshift, b) implies c_i = 1 << b_i
+        let vshift = _mm_set_epi8(0, 0, 0, 0, 0, 0, 0, 0,
+                                  0x80u8 as i8, 0x40, 0x20, 0x10, 8, 4, 2, 1);
+        // Compute the shifted bits.
+        // load e1_slices[e1_len + 0.. e1_len + 16];
+        let e1_matchoff = _mm_lddqu_si128(&e1_slice[e1_len] as *const u8 as *const __m128i);
+        let e1_match_bits = _mm_shuffle_epi8(vshift, e1_matchoff);
+        let match_bit = _mm_and_si128(e1_match_bits, matchsets);
+        let match_miss = _mm_cmpeq_epi8(match_bit, zero);
+        let match_mask = _mm_andnot_si128(match_miss, sign);
+        //println!("e1_matchbits = {:b}", I8x16(e1_match_bits));
+        //println!("match_bit = {:b}", I8x16(match_bit));
+        //println!("match_mask = {:x}", I8x16(match_mask));
+
+        // There is at most a single bit set, extract the index (starting at 1, to dinstingish the
+        // no-bit set case) of the single bit.
+        let bit_index_all = _mm_set_epi8(16, 15, 14, 13, 12, 11, 10, 9,
+                                         8, 7, 6, 5, 4, 3, 2, 1);
+
+        // Create a bit mask which reject all inputs which are outside the e1_len range.
+        let e1_filter = _mm_set1_epi8((e1_len as i8) + 1);
+        let e1_mask = _mm_cmplt_epi8(bit_index_all, e1_filter);
+        //println!("e1_mask = {:x}", I8x16(e1_mask));
+        // Filter out values which are not valid e1 data.
+        let bit_index_e1 = _mm_blendv_epi8(zero, bit_index_all, e1_mask);
+        // Compute the index of the mask which bit matched with both e1 and e2.
+        let match_index = _mm_blendv_epi8(zero, bit_index_e1, match_mask);
+        //println!("match_index = {:x}", I8x16(match_index));
+        // Extract the only matching index, if any.
+        let collect_index = _mm_sad_epu8(match_index, zero);
+        let index_lo = _mm_extract_epi8(collect_index, 0);
+        let index_hi = _mm_extract_epi8(collect_index, 8);
+        (index_lo + index_hi) as usize
+    };
+
+    let result = if index == 0 {
+        default
+    } else {
+        // TODO: find a different place to store the seq/rep bit.
+        // TODO: do a single load of an i16?
+        let hi = e1_slice[e1_len * 2 - 2 + index * 2];
+        let lo = e1_slice[e1_len * 2 - 2 + index * 2 + 1];
+        let res : i16 = (hi as i16) << 8 | lo as i16;
+        let add_e2_mask = res >> 15;
+        ((res << 1) >> 1) + (add_e2_mask & e2)
+    };
+    //println!("e1: {:?}, e2: {:?} --> {:?}", e1, e2, result);
+
+    /*
     let mut result : i16 = 0;
     for code in e1_slice {
         let code = *code as i32;
@@ -91,6 +222,7 @@ fn dual_map<'a>(dim: DualIndexMap<'a>, e1: usize, e2: usize, default: i16) -> i1
     if result == 0 {
         result = default;
     }
+    */
     result
 }
 
