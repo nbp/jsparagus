@@ -14,11 +14,27 @@ def hack_grammar(g):
 
     PARAM_WHITELIST = ['In', 'Default']
 
+    # Convert the following parameters to flags of the parser. Add the
+    # following grammar non-terminals with empty production rules:
+    # PushSetParam, PushUnsetParam and PopParam, with the associated production
+    # code.
+    PARAM_FLAGS = ['Yield', 'Await', 'Return']
+    PARAM_TO_NT = {}
+    for p in PARAM_FLAGS:
+        PARAM_TO_NT[p] = {
+            "PushSet": g.intern(jsparagus.grammar.Nt("PushSet" + p, ())),
+            "PushUnset": g.intern(jsparagus.grammar.Nt("PushUnset" + p, ())),
+            "Pop": g.intern(jsparagus.grammar.Nt("Pop" + p, ())),
+        }
+
     def filter_params(params):
         return tuple(p for p in params if p in PARAM_WHITELIST)
 
     def filter_args(args):
         return tuple(pair for pair in args if pair[0] in PARAM_WHITELIST)
+
+    def filter_flags(args):
+        return tuple(pair for pair in args if pair[0] in PARAM_FLAGS)
 
     def filter_element(e):
         """ Strip nt arguments. """
@@ -29,6 +45,36 @@ def hack_grammar(g):
         else:
             return e
 
+    def filter_element_params(e):
+        if isinstance(e, jsparagus.grammar.Nt):
+            return filter_flags(e.args)
+        elif isinstance(e, jsparagus.grammar.Optional):
+            return filter_element_params(e.inner)
+        else:
+            return []
+
+    def unfold_params(e):
+        """ Convert non-terminals parameters to empty productions to set or unset the
+        flags. """
+        params = filter_element_params(e)
+        elem = filter_element(e)
+
+        # Filter params which are set or unset.
+        def paramToEnterNt(param):
+            if param[1]:
+                return PARAM_TO_NT[param[0]]["PushSet"]
+            return PARAM_TO_NT[param[0]]["PushUnset"]
+        def paramToLeaveNt(param):
+            return PARAM_TO_NT[param[0]]["Pop"]
+        params = [ p for p in params if isinstance(p[1], bool) ]
+        ntFront = [ paramToEnterNt(p) for p in params ]
+        ntBack = [ paramToLeaveNt(p) for p in reversed(params) ]
+
+        # Foo --> Foo
+        # Foo[~F] --> PushUnsetF Foo PopF
+        # Foo[+F]? --> PushSetF Foo? PopF
+        return ntFront + [elem] + ntBack
+
     def filter_condition(c):
         if c is None or c[0] not in PARAM_WHITELIST:
             return None
@@ -36,7 +82,7 @@ def hack_grammar(g):
 
     def filter_production(p):
         """ Discard production conditions and nt arguments. """
-        body = [filter_element(e) for e in p.body]
+        body = [ e2 for e1 in p.body for e2 in unfold_params(e1) ]
         return jsparagus.grammar.Production(body, p.reducer,
                                             condition=filter_condition(p.condition))
 
@@ -45,6 +91,18 @@ def hack_grammar(g):
         params = tuple(filter_params(nt_def.params))
         rhs_list = [filter_production(p) for p in nt_def.rhs_list]
         nonterminals[nt] = jsparagus.grammar.NtDef(params, rhs_list, nt_def.type)
+
+    for p in PARAM_FLAGS:
+        nonterminals["PushUnset" + p] = jsparagus.grammar.NtDef((), [
+            jsparagus.grammar.Production([], jsparagus.grammar.CallMethod("push_unset_" + p.lower(), ()))
+        ], jsparagus.types.UnitType)
+        nonterminals["PushSet"+ p] = jsparagus.grammar.NtDef((), [
+            jsparagus.grammar.Production([], jsparagus.grammar.CallMethod("push_set_" + p.lower(), ()))
+        ], jsparagus.types.UnitType)
+        nonterminals["Pop" + p] = jsparagus.grammar.NtDef((), [
+            jsparagus.grammar.Production([], jsparagus.grammar.CallMethod("pop_" + p.lower(), ()))
+        ], jsparagus.types.UnitType)
+
     return g.with_nonterminals(nonterminals)
 
 
