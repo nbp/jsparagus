@@ -29,16 +29,20 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
         let mut state = self.state();
         assert!(state < TABLES.shift_count);
         let mut tv = tv;
+        let mut kind = &"shift";
         loop {
             let term_index: usize = tv.term.into();
             assert!(term_index < TABLES.shift_width);
             let index = state * TABLES.shift_width + term_index;
             let goto = TABLES.shift_table[index];
+            let tv_term: &'static str = tv.term.into();
+            println!("parser {}: {} -- {} --> {}", kind, state, tv_term, goto);
             if goto < 0 {
                 // Error handling is in charge of shifting an ErrorSymbol from the
                 // current state.
                 self.try_error_handling(tv)?;
                 tv = self.replay_stack.pop().unwrap();
+                kind = &"error";
                 continue;
             }
             state = goto as usize;
@@ -47,6 +51,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             // Execute any actions, such as reduce actions ast builder actions.
             while state >= TABLES.shift_count {
                 assert!(state < TABLES.action_count + TABLES.shift_count);
+                println!("parser action {}", state);
                 if actions(self, state)? {
                     return Ok(true);
                 }
@@ -54,6 +59,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             }
             assert!(state < TABLES.shift_count);
             if let Some(tv_temp) = self.replay_stack.pop() {
+                kind = &"replay";
                 tv = tv_temp;
             } else {
                 break;
