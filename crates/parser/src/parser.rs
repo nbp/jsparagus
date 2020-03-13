@@ -15,11 +15,41 @@ pub struct Parser<'alloc> {
     replay_stack: Vec<TermValue<StackValue<'alloc>>>,
     /// Build the AST stored in the TermValue vectors.
     handler: AstBuilder<'alloc>,
+
+    /// Boolean to know if we are in a directive prologue or not.
+    directive_prologue: bool,
+    /// Number of time we enter a body: ScriptBody, FunctionBody, ...
+    scope_depth: u32,
+    /// Scope depth at which "use strict" directive was used.
+    strict_depth: Option<u32>,
 }
 
 impl<'alloc> AstBuilderDelegate<'alloc> for Parser<'alloc> {
     fn ast_builder_refmut(&mut self) -> &mut AstBuilder<'alloc> {
         &mut self.handler
+    }
+}
+
+impl<'alloc> traits::StrictMode for Parser<'alloc> {
+    fn in_directive_prologue_mut(&mut self) -> &mut bool {
+        &mut self.directive_prologue
+    }
+    fn in_directive_prologue(&self) -> bool {
+        self.directive_prologue
+    }
+
+    /// Implement body depth.
+    fn body_depth(&self) -> u32 {
+        self.scope_depth
+    }
+    fn set_body_depth(&mut self, d: u32) {
+        self.scope_depth = d;
+    }
+    fn strict_depth(&self) -> Option<u32> {
+        self.strict_depth
+    }
+    fn set_strict_depth(&mut self, depth: Option<u32>) {
+        self.strict_depth = depth;
     }
 }
 
@@ -93,6 +123,9 @@ impl<'alloc> Parser<'alloc> {
             node_stack: vec![],
             replay_stack: vec![],
             handler,
+            directive_prologue: true,
+            scope_depth: 0,
+            strict_depth: None,
         }
     }
 

@@ -30,6 +30,7 @@ STANDARD_ES_GRAMMAR_OUT = js_parser/es.esgrammar
 # List of files which have a grammar_extension! Rust macro. The macro content is
 # scrapped to patch the extracted grammar.
 EXTENSION_FILES = \
+crates/generated_parser/src/traits/strict.rs
 
 # Incomplete list of files that contribute to the dump file.
 SOURCE_FILES = $(EXTENSION_FILES) \

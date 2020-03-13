@@ -3,3 +3,6 @@
 macro_rules! grammar_extension {
     ( $($_:tt)* ) => {};
 }
+
+mod strict;
+pub use strict::StrictMode;
