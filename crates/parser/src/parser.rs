@@ -1,4 +1,5 @@
 use crate::simulator::Simulator;
+use crate::stack::Stack;
 use ast::SourceLocation;
 use generated_parser::{
     full_actions, AstBuilder, AstBuilderDelegate, ErrorCode, ParseError, ParserTrait, Result,
@@ -7,12 +8,12 @@ use generated_parser::{
 
 pub struct Parser<'alloc> {
     /// Vector of states visited in the LR parse table.
-    state_stack: Vec<usize>,
+    state_stack: Stack<usize>,
     /// Vector of terms and their associated values.
-    node_stack: Vec<TermValue<StackValue<'alloc>>>,
+    node_stack: Stack<TermValue<StackValue<'alloc>>>,
     /// Vector of lookahead terms and their associated value, to be emptied by
     /// pop-ing elements from it before shifting any new terminals.
-    replay_stack: Vec<TermValue<StackValue<'alloc>>>,
+    replay_stack: Stack<TermValue<StackValue<'alloc>>>,
     /// Build the AST stored in the TermValue vectors.
     handler: AstBuilder<'alloc>,
 }
@@ -90,11 +91,13 @@ impl<'alloc> Parser<'alloc> {
     pub fn new(handler: AstBuilder<'alloc>, entry_state: usize) -> Self {
         TABLES.check();
         assert!(entry_state < TABLES.shift_count);
+        let mut state_stack = Stack::with_capacity(128);
+        state_stack.push(entry_state);
 
         Self {
-            state_stack: vec![entry_state],
-            node_stack: vec![],
-            replay_stack: vec![],
+            state_stack,
+            node_stack: Stack::with_capacity(128),
+            replay_stack: Stack::with_capacity(4),
             handler,
         }
     }

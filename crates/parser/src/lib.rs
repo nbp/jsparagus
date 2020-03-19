@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "unstable", feature(test))]
 
+mod stack;
 mod lexer;
 mod parser;
 mod simulator;
