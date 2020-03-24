@@ -25,6 +25,7 @@ impl<'alloc> AstBuilderDelegate<'alloc> for Parser<'alloc> {
 
 impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     fn shift(&mut self, tv: TermValue<StackValue<'alloc>>) -> Result<'alloc, bool> {
+        println!("shift: {}", <&'static str>::from(tv.term));
         self.node_stack.enqueue(tv);
         // Shift the new terminal/nonterminal and its associated value.
         let mut state = self.state();
@@ -34,6 +35,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             assert!(term_index < TABLES.shift_width);
             let index = state * TABLES.shift_width + term_index;
             let goto = TABLES.shift_table[index];
+            println!("shift-loop: ({}, {}, {})", state, term_index, goto);
             if goto < 0 {
                 self.node_stack.shift();
                 let tv = self.node_stack.pop().unwrap();
