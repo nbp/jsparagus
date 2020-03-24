@@ -7,7 +7,7 @@ use generated_parser::{
 
 pub struct Parser<'alloc> {
     /// Vector of states visited in the LR parse table.
-    state_stack: Vec<usize>,
+    state_stack: Vec<u16>,
     /// Vector of terms and their associated values.
     node_stack: Vec<TermValue<StackValue<'alloc>>>,
     /// Vector of lookahead terms and their associated value, to be emptied by
@@ -27,12 +27,12 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     fn shift(&mut self, tv: TermValue<StackValue<'alloc>>) -> Result<'alloc, bool> {
         // Shift the new terminal/nonterminal and its associated value.
         let mut state = self.state();
-        assert!(state < TABLES.shift_count);
+        assert!((state as usize) < TABLES.shift_count);
         let mut tv = tv;
         loop {
             let term_index: usize = tv.term.into();
             assert!(term_index < TABLES.shift_width);
-            let index = state * TABLES.shift_width + term_index;
+            let index = (state as usize) * TABLES.shift_width + term_index;
             let goto = TABLES.shift_table[index];
             if goto < 0 {
                 // Error handling is in charge of shifting an ErrorSymbol from the
@@ -41,18 +41,18 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
                 tv = self.replay_stack.pop().unwrap();
                 continue;
             }
-            state = goto as usize;
+            state = goto as u16;
             self.state_stack.push(state);
             self.node_stack.push(tv);
             // Execute any actions, such as reduce actions ast builder actions.
-            while state >= TABLES.shift_count {
-                assert!(state < TABLES.action_count + TABLES.shift_count);
+            while (state as usize) >= TABLES.shift_count {
+                assert!((state as usize) < TABLES.action_count + TABLES.shift_count);
                 if full_actions(self, state)? {
                     return Ok(true);
                 }
                 state = self.state();
             }
-            assert!(state < TABLES.shift_count);
+            assert!((state as usize) < TABLES.shift_count);
             if let Some(tv_temp) = self.replay_stack.pop() {
                 tv = tv_temp;
             } else {
@@ -64,7 +64,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     fn replay(&mut self, tv: TermValue<StackValue<'alloc>>) {
         self.replay_stack.push(tv)
     }
-    fn epsilon(&mut self, state: usize) {
+    fn epsilon(&mut self, state: u16) {
         *self.state_stack.last_mut().unwrap() = state;
     }
     fn pop(&mut self) -> TermValue<StackValue<'alloc>> {
@@ -87,9 +87,9 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
 }
 
 impl<'alloc> Parser<'alloc> {
-    pub fn new(handler: AstBuilder<'alloc>, entry_state: usize) -> Self {
+    pub fn new(handler: AstBuilder<'alloc>, entry_state: u16) -> Self {
         TABLES.check();
-        assert!(entry_state < TABLES.shift_count);
+        assert!((entry_state as usize) < TABLES.shift_count);
 
         Self {
             state_stack: vec![entry_state],
@@ -99,7 +99,7 @@ impl<'alloc> Parser<'alloc> {
         }
     }
 
-    fn state(&self) -> usize {
+    fn state(&self) -> u16 {
         *self.state_stack.last().unwrap()
     }
 
@@ -160,8 +160,8 @@ impl<'alloc> Parser<'alloc> {
             // Otherwise, check if the current rule accept an Automatic
             // Semi-Colon insertion (ASI).
             let state = self.state();
-            assert!(state < TABLES.shift_count);
-            let error_code = TABLES.error_codes[state];
+            assert!((state as usize) < TABLES.shift_count);
+            let error_code = TABLES.error_codes[state as usize];
             if let Some(error_code) = error_code {
                 let err_token = (*token).clone();
                 Self::recover(token, error_code)?;

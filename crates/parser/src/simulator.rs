@@ -18,12 +18,12 @@ pub struct Simulator<'alloc, 'parser> {
     /// Define the top of the immutable stack.
     sp: usize,
     /// Immutable state stack coming from the forked parser.
-    state_stack: &'parser [usize],
+    state_stack: &'parser [u16],
     /// Immuatable term stack coming from the forked parser.
     node_stack: &'parser [TermValue<StackValue<'alloc>>],
     /// Mutable state stack used by the simulator on top of the immutable
     /// parser's state stack.
-    sim_state_stack: Vec<usize>,
+    sim_state_stack: Vec<u16>,
     /// Mutable term stack used by the simulator on top of the immutable
     /// parser's term stack.
     sim_node_stack: Vec<TermValue<()>>,
@@ -35,12 +35,12 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
     fn shift(&mut self, tv: TermValue<()>) -> Result<'alloc, bool> {
         // Shift the new terminal/nonterminal and its associated value.
         let mut state = self.state();
-        assert!(state < TABLES.shift_count);
+        assert!((state as usize) < TABLES.shift_count);
         let mut tv = tv;
         loop {
             let term_index: usize = tv.term.into();
             assert!(term_index < TABLES.shift_width);
-            let index = state * TABLES.shift_width + term_index;
+            let index = (state as usize) * TABLES.shift_width + term_index;
             let goto = TABLES.shift_table[index];
             if goto < 0 {
                 // Error handling is in charge of shifting an ErrorSymbol from the
@@ -49,18 +49,18 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
                 tv = self.replay_stack.pop().unwrap();
                 continue;
             }
-            state = goto as usize;
+            state = goto as u16;
             self.sim_state_stack.push(state);
             self.sim_node_stack.push(tv);
             // Execute any actions, such as reduce actions.
-            while state >= TABLES.shift_count {
-                assert!(state < TABLES.action_count + TABLES.shift_count);
+            while (state as usize) >= TABLES.shift_count {
+                assert!((state as usize) < TABLES.action_count + TABLES.shift_count);
                 if noop_actions(self, state)? {
                     return Ok(true);
                 }
                 state = self.state();
             }
-            assert!(state < TABLES.shift_count);
+            assert!((state as usize) < TABLES.shift_count);
             if let Some(tv_temp) = self.replay_stack.pop() {
                 tv = tv_temp;
             } else {
@@ -72,7 +72,7 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
     fn replay(&mut self, tv: TermValue<()>) {
         self.replay_stack.push(tv)
     }
-    fn epsilon(&mut self, state: usize) {
+    fn epsilon(&mut self, state: u16) {
         if self.sim_state_stack.is_empty() {
             self.sim_state_stack.push(self.state_stack[self.sp]);
             self.sim_node_stack.push(TermValue {
@@ -99,7 +99,7 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
 
 impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
     pub fn new(
-        state_stack: &'parser [usize],
+        state_stack: &'parser [u16],
         node_stack: &'parser [TermValue<StackValue<'alloc>>],
     ) -> Simulator<'alloc, 'parser> {
         let sp = state_stack.len() - 1;
@@ -114,7 +114,7 @@ impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
         }
     }
 
-    fn state(&self) -> usize {
+    fn state(&self) -> u16 {
         if let Some(res) = self.sim_state_stack.last() {
             *res
         } else {
@@ -169,8 +169,8 @@ impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
             // Otherwise, check if the current rule accept an Automatic
             // Semi-Colon insertion (ASI).
             let state = self.state();
-            assert!(state < TABLES.shift_count);
-            let error_code = TABLES.error_codes[state];
+            assert!((state as usize) < TABLES.shift_count);
+            let error_code = TABLES.error_codes[state as usize];
             if let Some(error_code) = error_code {
                 Parser::recover(token, error_code)?;
                 self.replay(t);

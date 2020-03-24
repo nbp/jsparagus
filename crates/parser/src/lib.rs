@@ -53,7 +53,7 @@ pub fn parse_module<'alloc>(
 fn parse<'alloc>(
     allocator: &'alloc bumpalo::Bump,
     source: &'alloc str,
-    start_state: usize,
+    start_state: u16,
     atoms: Rc<RefCell<SourceAtomSet<'alloc>>>,
 ) -> Result<'alloc, StackValue<'alloc>> {
     let mut tokens = Lexer::new(allocator, source.chars(), atoms.clone());

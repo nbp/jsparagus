@@ -126,7 +126,7 @@ class RustParserWriter:
         else:
             self.write(0, "use crate::traits::{{{}}};", ", ".join(ty.name for ty in traits))
         self.write(0, "")
-        self.write(0, "const ERROR: i64 = {};", hex(ERROR))
+        self.write(0, "const ERROR: i16 = {};", -1)
         self.write(0, "")
 
 
@@ -210,7 +210,7 @@ class RustParserWriter:
             else:
                 num_shifted_edges += 1
             return res
-        self.write(0, "static SHIFT: [i64; {}] = [", self.shift_count * width)
+        self.write(0, "static SHIFT: [i16; {}] = [", self.shift_count * width)
         assert self.terminals[-1] == "ErrorToken"
         for i, state in enumerate(self.states[:self.shift_count]):
             num_shifted_edges = 0
@@ -441,7 +441,7 @@ class RustParserWriter:
         self.write(3, "self.replay(tv);")
         self.write(2, "}")
         self.write(1, "}")
-        self.write(1, "fn epsilon(&mut self, state: usize);")
+        self.write(1, "fn epsilon(&mut self, state: u16);")
         self.write(1, "fn pop(&mut self) -> TermValue<Value>;")
         self.write(1, "fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool>;")
         self.write(0, "}")
@@ -620,7 +620,7 @@ class RustParserWriter:
             used_variables = set()
             traits = mode_traits
             has_ast_builder = ast_builder in traits
-            self.write(0, "pub fn {}<'alloc, Handler>(parser: &mut Handler, state: usize) -> Result<'alloc, bool>",
+            self.write(0, "pub fn {}<'alloc, Handler>(parser: &mut Handler, state: u16) -> Result<'alloc, bool>",
                        mode)
             self.write(0, "where")
             self.write(1, "Handler: {}", ' + '.join(map(self.type_to_rust, traits)))
@@ -779,7 +779,7 @@ class RustParserWriter:
         self.write(0, "pub struct ParseTable<'a> {")
         self.write(1, "pub shift_count: usize,")
         self.write(1, "pub action_count: usize,")
-        self.write(1, "pub shift_table: &'a [i64],")
+        self.write(1, "pub shift_table: &'a [i16],")
         self.write(1, "pub shift_width: usize,")
         self.write(1, "pub error_codes: &'a [Option<ErrorCode>],")
         self.write(0, "}")
@@ -806,7 +806,7 @@ class RustParserWriter:
 
         for init_nt, index in self.init_state_map:
             assert init_nt.args == ()
-            self.write(0, "pub static START_STATE_{}: usize = {};",
+            self.write(0, "pub static START_STATE_{}: u16 = {};",
                        self.nonterminal_to_snake(init_nt).upper(), index)
             self.write(0, "")
 
