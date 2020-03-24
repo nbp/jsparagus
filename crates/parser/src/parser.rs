@@ -29,6 +29,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
         // The shift function should exit either by accepting the input or
         // emptying its queue of lookahead.
         debug_assert!(self.node_stack.queue_empty());
+        println!("shift: {}", <&'static str>::from(tv.term));
         self.node_stack.enqueue(tv);
         // Shift the new terminal/nonterminal and its associated value.
         json_trace!({ "enter": "shift" });
@@ -44,6 +45,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
                 "to": goto,
                 "term": format!("{:?}", { let s: &'static str = tv.term.into(); s }),
             });
+            println!("shift-loop: ({}, {}, {})", state, term_index, goto);
             if goto < 0 {
                 self.node_stack.shift();
                 let tv = self.node_stack.pop().unwrap();
