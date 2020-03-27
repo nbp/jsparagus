@@ -514,7 +514,7 @@ class RustParserWriter:
                 if value != "value":
                     self.write(indent, "let value = {};", value)
                 self.write(indent, "parser.replay(TermValue { term, value });")
-                self.write(indent, "Ok(false)")
+                self.write(indent, "return Ok(false)")
                 return False
             elif isinstance(act, CheckNotOnNewLine):
                 assert -act.offset > 0
@@ -627,14 +627,16 @@ class RustParserWriter:
             self.write(0, "where")
             self.write(1, "Handler: {}", ' + '.join(map(self.type_to_rust, traits)))
             self.write(0, "{")
-            self.write(1, "match state {")
+            self.write(1, "let mut state = state;")
+            self.write(1, "loop {")
+            self.write(2, "match state {")
             assert len(self.states[self.shift_count:]) == self.action_count
             for state in self.states[self.shift_count:]:
-                self.write(2, "{} => {{", state.index)
+                self.write(3, "{} => {{", state.index)
                 for ctx in self.parse_table.debug_context(state.index, None):
-                    self.write(3, "// {}", ctx)
+                    self.write(4, "// {}", ctx)
                 for act, d in state.edges():
-                    self.write(3, "// {} --> {}", str(act), d)
+                    self.write(4, "// {} --> {}", str(act), d)
                     is_packed = {} # Map variable names to a boolean to know if the data is packed or not.
                     try:
                         used_variables = set(collect_uses(act))
@@ -645,10 +647,15 @@ class RustParserWriter:
                         print(self.parse_table.debug_context(state.index, "\n", "# "))
                         raise
                     if fallthrough:
-                        self.write(3, "parser.epsilon({});", d)
-                        self.write(3, "return Ok(false)")
-                self.write(2, "}")
-            self.write(2, '_ => panic!("no such state: {}", state),')
+                        assert 0 <= d < self.shift_count + self.action_count
+                        if d >= self.shift_count:
+                            self.write(4, "state = {}", d)
+                        else:
+                            self.write(4, "parser.epsilon({});", d)
+                            self.write(4, "return Ok(false)")
+                self.write(3, "}")
+            self.write(3, '_ => panic!("no such state: {}", state),')
+            self.write(2, "}")
             self.write(1, "}")
             self.write(0, "}")
             self.write(0, "")

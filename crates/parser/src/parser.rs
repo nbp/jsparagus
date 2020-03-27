@@ -46,7 +46,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             self.state_stack.push(state);
             self.node_stack.shift();
             // Execute any actions, such as reduce actions ast builder actions.
-            while state >= TABLES.shift_count {
+            if state >= TABLES.shift_count {
                 assert!(state < TABLES.action_count + TABLES.shift_count);
                 if full_actions(self, state)? {
                     return Ok(true);
