@@ -1,3 +1,4 @@
+use crate::queue_stack::QueueStack;
 use crate::simulator::Simulator;
 use ast::SourceLocation;
 use generated_parser::{
@@ -8,11 +9,10 @@ use generated_parser::{
 pub struct Parser<'alloc> {
     /// Vector of states visited in the LR parse table.
     state_stack: Vec<usize>,
-    /// Vector of terms and their associated values.
-    node_stack: Vec<TermValue<StackValue<'alloc>>>,
-    /// Vector of lookahead terms and their associated value, to be emptied by
-    /// pop-ing elements from it before shifting any new terminals.
-    replay_stack: Vec<TermValue<StackValue<'alloc>>>,
+    /// Stack and Queue of terms and their associated values. The Queue
+    /// corresponds to terms which are added as lookahead as well as terms which
+    /// are replayed, and the stack matches the state_stack.
+    node_stack: QueueStack<TermValue<StackValue<'alloc>>>,
     /// Build the AST stored in the TermValue vectors.
     handler: AstBuilder<'alloc>,
 }
@@ -25,25 +25,26 @@ impl<'alloc> AstBuilderDelegate<'alloc> for Parser<'alloc> {
 
 impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     fn shift(&mut self, tv: TermValue<StackValue<'alloc>>) -> Result<'alloc, bool> {
+        self.node_stack.enqueue(tv);
         // Shift the new terminal/nonterminal and its associated value.
         let mut state = self.state();
         assert!(state < TABLES.shift_count);
-        let mut tv = tv;
-        loop {
-            let term_index: usize = tv.term.into();
+        while !self.node_stack.queue_empty() {
+            let term_index: usize = self.node_stack.next().unwrap().term.into();
             assert!(term_index < TABLES.shift_width);
             let index = state * TABLES.shift_width + term_index;
             let goto = TABLES.shift_table[index];
             if goto < 0 {
+                self.node_stack.shift();
+                let tv = self.node_stack.pop().unwrap();
                 // Error handling is in charge of shifting an ErrorSymbol from the
                 // current state.
                 self.try_error_handling(tv)?;
-                tv = self.replay_stack.pop().unwrap();
                 continue;
             }
             state = goto as usize;
             self.state_stack.push(state);
-            self.node_stack.push(tv);
+            self.node_stack.shift();
             // Execute any actions, such as reduce actions ast builder actions.
             while state >= TABLES.shift_count {
                 assert!(state < TABLES.action_count + TABLES.shift_count);
@@ -53,23 +54,22 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
                 state = self.state();
             }
             assert!(state < TABLES.shift_count);
-            if let Some(tv_temp) = self.replay_stack.pop() {
-                tv = tv_temp;
-            } else {
-                break;
-            }
         }
         Ok(false)
     }
-    fn replay(&mut self, tv: TermValue<StackValue<'alloc>>) {
-        self.replay_stack.push(tv)
-    }
-    fn epsilon(&mut self, state: usize) {
-        *self.state_stack.last_mut().unwrap() = state;
+    fn unshift(&mut self) {
+        self.state_stack.pop().unwrap();
+        self.node_stack.unshift()
     }
     fn pop(&mut self) -> TermValue<StackValue<'alloc>> {
         self.state_stack.pop().unwrap();
         self.node_stack.pop().unwrap()
+    }
+    fn replay(&mut self, tv: TermValue<StackValue<'alloc>>) {
+        self.node_stack.push_next(tv)
+    }
+    fn epsilon(&mut self, state: usize) {
+        *self.state_stack.last_mut().unwrap() = state;
     }
     fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool> {
         let sv = &self.node_stack[self.node_stack.len() - peek].value;
@@ -90,11 +90,12 @@ impl<'alloc> Parser<'alloc> {
     pub fn new(handler: AstBuilder<'alloc>, entry_state: usize) -> Self {
         TABLES.check();
         assert!(entry_state < TABLES.shift_count);
+        let mut state_stack = Vec::with_capacity(128);
+        state_stack.push(entry_state);
 
         Self {
-            state_stack: vec![entry_state],
-            node_stack: vec![],
-            replay_stack: vec![],
+            state_stack,
+            node_stack: QueueStack::with_capacity(128),
             handler,
         }
     }
@@ -196,7 +197,7 @@ impl<'alloc> Parser<'alloc> {
     }
 
     fn simulator<'a>(&'a self) -> Simulator<'alloc, 'a> {
-        assert_eq!(self.replay_stack.len(), 0);
+        assert_eq!(self.node_stack.queue_len(), 0);
         Simulator::new(&self.state_stack, &self.node_stack)
     }
 

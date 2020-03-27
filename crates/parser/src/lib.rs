@@ -2,6 +2,7 @@
 
 mod lexer;
 mod parser;
+mod queue_stack;
 mod simulator;
 
 #[cfg(test)]
