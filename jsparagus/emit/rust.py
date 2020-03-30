@@ -165,10 +165,10 @@ class RustActionWriter:
         if isinstance(first_act, CheckNotOnNewLine):
             # TODO: At the moment this is Action is implemented as a single
             # operation with a single destination. However, we should implement
-            # it in the future as 2 branches, one which verifying the lack of
-            # new lines, and one which is shifting an extra error token. This
-            # might help remove the overhead of backtracking in addition to
-            # make this backtracking visible through APS.
+            # it in the future as 2 branches, one which is verifying the lack
+            # of new lines, and one which is shifting an extra error token.
+            # This might help remove the overhead of backtracking in addition
+            # to make this backtracking visible through APS.
             assert len(list(state.edges())) == 1
             act, dest = next(state.edges())
             assert -act.offset > 0
