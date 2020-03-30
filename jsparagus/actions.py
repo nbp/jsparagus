@@ -119,6 +119,24 @@ class Reduce(Action):
     def shifted_action(self, shifted_term):
         return Reduce(self.nt, self.pop, replay = self.replay + 1)
 
+class Accept(Action):
+    """This state terminate the parser by accepting the content consumed until
+    now."""
+    __slots__ = ()
+
+    def __init__(self):
+        super().__init__([], [])
+
+    def __str__(self):
+        return "Accept()"
+
+    def contains_accept(self):
+        "Returns whether the current action stops the parser."
+        return True
+
+    def shifted_action(self, shifted_term):
+        return Accept()
+
 class Lookahead(Action):
     """Define a Lookahead assertion which is meant to either accept or reject
     sequences of terminal/non-terminals sequences."""
@@ -315,9 +333,6 @@ class FunCall(Action):
             self.args, self.set_to, self.offset
         ])))
 
-    def contains_accept(self):
-        return self.method == "accept"
-
     def map_args(self, f):
         return FunCall(self.method, tuple(f(self.offset, a) for a in self.args),
                        trait = self.trait,
@@ -358,7 +373,9 @@ class Seq(Action):
         super().__init__(read, write)
         self.actions = tuple(actions)   # Ordered list of actions to execute.
         assert all([not a.is_condition() for a in actions])
+        assert all([not isinstance(a, Seq) for a in actions])
         assert all([not a.update_stack() for a in actions[:-1]])
+        assert all([not a.contains_accept() for a in actions[:-1]])
 
     def __str__(self):
         return "{{ {} }}".format("; ".join(map(str, self.actions)))
@@ -377,7 +394,7 @@ class Seq(Action):
         return Seq(actions)
 
     def contains_accept(self):
-        return any(a.contains_accept() for a in self.actions)
+        return self.actions[-1].contains_accept()
 
 class SeqBuilder:
     """Aggregate multiple actions in one sequence. Reduce actions added to this

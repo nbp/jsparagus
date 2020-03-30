@@ -41,8 +41,8 @@ from .grammar import (Grammar,
                       Optional, Exclude, Literal, UnicodeCategory, Nt, Var,
                       End, NoLineTerminatorHere, ErrorSymbol,
                       LookaheadRule, lookahead_contains, lookahead_intersect)
-from .actions import (Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag,
-                      PushFlag, PopFlag, FunCall, Seq, SeqBuilder)
+from .actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine,
+                      FilterFlag, PushFlag, PopFlag, FunCall, Seq, SeqBuilder)
 from . import emit
 from .runtime import ACCEPT, ErrorToken
 from .utils import keep_until
@@ -1835,13 +1835,7 @@ def callmethods_to_funcalls(expr, pop, ret, depth, funcalls):
         funcalls.append(expr)
         return ret
     elif expr == "accept":
-        expr = FunCall("accept", (),
-                       trait = types.Type("ParserTrait"),
-                       fallible = False,
-                       set_to = ret,
-                       alias_read = alias_set,
-                       alias_write = alias_set)
-        funcalls.append(expr)
+        funcalls.append(Accept())
         return ret
     else:
         raise ValueError(expr)
@@ -1970,7 +1964,10 @@ class LR0Generator:
             if expr is not None:
                 funcalls = []
                 callmethods_to_funcalls(expr, pop, "value", 0, funcalls)
-                term = Seq(funcalls + [term])
+                if funcalls[-1].contains_accept():
+                    term = Seq(funcalls)
+                else:
+                    term = Seq(funcalls + [term])
         else:
             # No edges after the reduce operation.
             return
