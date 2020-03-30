@@ -5,12 +5,14 @@ import re
 import unicodedata
 import sys
 import itertools
+from contextlib import contextmanager
 
 from ..runtime import (ERROR, ErrorToken, SPECIAL_CASE_TAG)
 from ..ordered import OrderedSet
 
 from ..grammar import (CallMethod, Some, is_concrete_element, Nt, InitNt, Optional, End, ErrorSymbol)
-from ..actions import Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag, PopFlag, FunCall, Seq
+from ..actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterStates, FilterFlag,
+                       PushFlag, PopFlag, FunCall, Seq)
 
 from .. import types
 
@@ -70,6 +72,12 @@ TERMINAL_NAMES = {
     ',': 'Comma',
     '...': 'Ellipsis',
 }
+
+@contextmanager
+def indent(writer):
+    writer.indent += 1
+    yield None
+    writer.indent -= 1
 
 class RustActionWriter:
     """Write epsilon state transitions for a given action function."""
@@ -173,11 +181,23 @@ class RustActionWriter:
             assert -act.offset > 0
             self.write("// {}", str(act))
             self.write("if !parser.check_not_on_new_line({})? {{", -act.offset)
-            self.indent += 1
-            self.write("return Ok(false);")
-            self.indent -= 1
+            with indent(self):
+                self.write("return Ok(false);")
             self.write("}")
             self.write_epsilon_transition(dest)
+        elif isinstance(first_act, FilterStates):
+            value = -first_act.offset
+            self.write("match parser.state_at_depth({}) {", value)
+            with indent(self):
+                for act, dest in state.edges():
+                    assert first_act.check_same_variable(act)
+                    self.write("{} => {{", " | ".join(map(str, act.states)))
+                    with indent(self):
+                        self.write_epsilon_transition(dest)
+                    self.write("}")
+                self.write("_ => panic!(\"Unexpected state value.\")")
+            self.write("}")
+            pass
         else:
             raise ValueError("Unexpected action type")
 
@@ -637,6 +657,7 @@ class RustParserWriter:
         self.write(1, "fn pop(&mut self) -> TermValue<Value>;")
         self.write(1, "fn replay(&mut self, tv: TermValue<Value>);")
         self.write(1, "fn epsilon(&mut self, state: usize);")
+        self.write(1, "fn state_at_depth(&self, depth: usize) -> usize;")
         self.write(1, "fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool>;")
         self.write(0, "}")
         self.write(0, "")

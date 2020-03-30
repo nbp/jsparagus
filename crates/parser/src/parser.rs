@@ -71,6 +71,9 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     fn epsilon(&mut self, state: usize) {
         *self.state_stack.last_mut().unwrap() = state;
     }
+    fn state_at_depth(&self, depth: usize) -> usize {
+        self.state_stack[self.state_stack.len() - 1 - depth]
+    }
     fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool> {
         let sv = &self.node_stack[self.node_stack.len() - peek].value;
         if let StackValue::Token(ref token) = sv {

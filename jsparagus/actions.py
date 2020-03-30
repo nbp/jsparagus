@@ -221,11 +221,11 @@ class FilterStates(Action):
     __slots__ = 'states', 'offset'
 
     def __init__(self, states, offset):
-        assert isinstance(states, (list, tuple, set))
+        assert isinstance(states, (list, tuple, OrderedFrozenSet))
         assert isinstance(offset, int)
         super().__init__([], [])
         # Set of states which can follow this transition.
-        self.states = set(states)
+        self.states = OrderedFrozenSet(states)
         # Offset to poke for the state value.
         self.offset = offset
 

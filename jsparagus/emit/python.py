@@ -1,7 +1,7 @@
 """Emit code and parser tables in Python."""
 
 from ..grammar import InitNt, CallMethod, Some, is_concrete_element, Nt, ErrorSymbol
-from ..actions import Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag, PopFlag, FunCall, Seq
+from ..actions import Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterStates, FilterFlag, PushFlag, PopFlag, FunCall, Seq
 from ..runtime import SPECIAL_CASE_TAG, ErrorToken
 from ..ordered import OrderedSet
 
@@ -12,6 +12,18 @@ def write_python_parse_table(out, parse_table):
     if any(isinstance(key, Nt) for key in parse_table.nonterminals):
         out.write("from jsparagus.runtime import Nt, InitNt, End, ErrorToken, StateTermValue, ShiftError, ShiftAccept\n")
     out.write("\n")
+
+    def write_epsilon_transition(indent, dest):
+        if dest >= shift_count:
+            assert dest < shift_count + action_count
+            # This is a transition to an action.
+            out.write("{}state_{}_actions(parser, lexer)\n".format(indent, dest))
+        else:
+            # This is a transition to a shift.
+            out.write("{}top = parser.stack.pop()\n".format(indent))
+            out.write("{}top = StateTermValue({}, top.term, top.value, top.new_line)\n"
+                      .format(indent, dest))
+            out.write("{}parser.stack.append(top)\n".format(indent))
 
     methods = OrderedSet()
     def write_action(act, indent = ""):
@@ -34,6 +46,10 @@ def write_python_parse_table(out, parse_table):
             out.write("{}if not parser.check_not_on_new_line(lexer, {}):\n".format(indent, -act.offset))
             out.write("{}    return\n".format(indent))
             return indent, True
+        if isinstance(act, FilterStates):
+            out.write("{}if parser.state_at_depth({}) in [{}]:\n".format(
+                indent, -act.offset, ", ".join(map(str, act.states))))
+            return indent + "    ", True
         if isinstance(act, FilterFlag):
             out.write("{}if parser.flags[{}][-1] == {}:\n".format(indent, act.flag, act.value))
             return indent + "    ", True
@@ -91,16 +107,7 @@ def write_python_parse_table(out, parse_table):
                 print(parse_table.debug_context(state.index, "\n", "# "))
                 raise
             if fallthrough:
-                if dest >= shift_count:
-                    assert dest < shift_count + action_count
-                    # This is a transition to an action.
-                    out.write("{}state_{}_actions(parser, lexer)\n".format(indent, dest))
-                else:
-                    # This is a transition to a shift.
-                    out.write("{}top = parser.stack.pop()\n".format(indent))
-                    out.write("{}top = StateTermValue({}, top.term, top.value, top.new_line)\n"
-                              .format(indent, dest))
-                    out.write("{}parser.stack.append(top)\n".format(indent))
+                write_epsilon_transition(indent, dest)
             out.write("{}return\n".format(indent))
         out.write("\n")
 
