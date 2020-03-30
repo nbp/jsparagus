@@ -1,8 +1,8 @@
 """Emit code and parser tables in Python."""
 
 from ..grammar import Some, Nt, ErrorSymbol
-from ..actions import (Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag, PopFlag,
-                       FunCall, Seq)
+from ..actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag,
+                       PopFlag, FunCall, Seq)
 from ..runtime import ErrorToken
 from ..ordered import OrderedSet
 
@@ -32,6 +32,9 @@ def write_python_parse_table(out, parse_table):
             if act.replay + act.pop > 0:
                 out.write("{}del parser.stack[-{}:]\n".format(indent, act.replay + act.pop))
             out.write("{}parser.shift_list(replay, lexer)\n".format(indent))
+            return indent, False
+        if isinstance(act, Accept):
+            out.write("{}raise ShiftAccept()\n".format(indent))
             return indent, False
         if isinstance(act, Lookahead):
             raise ValueError("Unexpected Lookahead action")
@@ -65,9 +68,6 @@ def write_python_parse_table(out, parse_table):
             if act.method == "id":
                 assert len(act.args) == 1
                 out.write("{}{} = {}\n".format(indent, act.set_to, next(map_with_offset(act.args))))
-            elif act.method == "accept":
-                assert len(act.args) == 0
-                out.write("{}raise ShiftAccept()\n".format(indent))
             else:
                 methods.add(act)
                 out.write("{}{} = parser.methods.{}({})\n".format(

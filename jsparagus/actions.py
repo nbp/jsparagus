@@ -142,6 +142,24 @@ class Reduce(Action):
         return Reduce(self.nt, self.pop, replay=self.replay + 1)
 
 
+class Accept(Action):
+    """This state terminate the parser by accepting the content consumed until
+    now."""
+    __slots__ = ()
+
+    def __init__(self):
+        super().__init__([], [])
+
+    def __str__(self):
+        return "Accept()"
+
+    def contains_accept(self):
+        "Returns whether the current action stops the parser."
+        return True
+
+    def shifted_action(self, shifted_term):
+        return Accept()
+
 class Lookahead(Action):
     """Define a Lookahead assertion which is meant to either accept or reject
     sequences of terminal/non-terminals sequences."""
@@ -342,6 +360,24 @@ class FunCall(Action):
             self.args, self.set_to, self.offset
         ])))
 
+    def map_args(self, f):
+        return FunCall(self.method, tuple(f(self.offset, a) for a in self.args),
+                       trait = self.trait,
+                       fallible = self.fallible,
+                       set_to = self.set_to,
+                       offset = 0,
+                       alias_read = self.read,
+                       alias_write = self.write)
+
+    def replace_set_to(self, name):
+        return FunCall(self.method, self.args,
+                       trait = self.trait,
+                       fallible = self.fallible,
+                       set_to = name,
+                       offset = self.offset,
+                       alias_read = self.read,
+                       alias_write = self.write)
+
     def shifted_action(self, shifted_term):
         return FunCall(self.method, self.args,
                        trait=self.trait,
@@ -365,7 +401,9 @@ class Seq(Action):
         super().__init__(read, write)
         self.actions = tuple(actions)   # Ordered list of actions to execute.
         assert all([not a.is_condition() for a in actions])
+        assert all([not isinstance(a, Seq) for a in actions])
         assert all([not a.update_stack() for a in actions[:-1]])
+        assert all([not a.contains_accept() for a in actions[:-1]])
 
     def __str__(self):
         return "{{ {} }}".format("; ".join(map(str, self.actions)))
@@ -382,3 +420,6 @@ class Seq(Action):
     def shifted_action(self, shift):
         actions = list(map(lambda a: a.shifted_action(shift), self.actions))
         return Seq(actions)
+
+    def contains_accept(self):
+        return self.actions[-1].contains_accept()
