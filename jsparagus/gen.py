@@ -47,7 +47,7 @@ from . import emit
 from .runtime import ACCEPT, ErrorToken
 from .utils import keep_until
 from . import types
-from .aps import Edge, APS
+from .aps import Edge, APS, edge_str
 
 # *** Operations on grammars **************************************************
 
