@@ -30,7 +30,15 @@ class Action:
 
     def condition(self):
         "Return the conditional action."
-        raise TypeError("Action::condition_flag not implemented")
+        raise TypeError("Action::condition not implemented")
+
+    def check_same_variable(self, other):
+        "Return whether both conditional are checking the same variable."
+        raise TypeError("Action::check_same_variable not implemented")
+
+    def check_different_values(self, other):
+        "Return whether both conditional are checking non-overlapping values."
+        raise TypeError("Action::check_different_values not implemented")
 
     def update_stack(self):
         """Change the parser stack, and resume at a different location. If this function
@@ -45,6 +53,10 @@ class Action:
     def shifted_action(self, shifted_term):
         "Returns the same action shifted by a given amount."
         return self
+
+    def contains_accept(self):
+        "Returns whether the current action stops the parser."
+        return False
 
     def maybe_add(self, other):
         """Implement the fact of concatenating actions into a new action which can have
@@ -154,6 +166,12 @@ class Lookahead(Action):
     def condition(self):
         return self
 
+    def check_same_variable(self, other):
+        raise TypeError("Lookahead::check_same_variables: Lookahead are always inconsistent")
+
+    def check_different_values(self, other):
+        raise TypeError("Lookahead::check_different_values: Lookahead are always inconsistent")
+
     def __str__(self):
         return "Lookahead({}, {})".format(self.terms, self.accept)
 
@@ -189,6 +207,12 @@ class CheckNotOnNewLine(Action):
     def condition(self):
         return self
 
+    def check_same_variable(self, other):
+        return self.offset == other.offset
+
+    def check_different_values(self, other):
+        return False
+
     def shifted_action(self, shifted_term):
         if isinstance(shifted_term, Nt):
             return True
@@ -197,6 +221,35 @@ class CheckNotOnNewLine(Action):
     def __str__(self):
         return "CheckNotOnNewLine({})".format(self.offset)
 
+class FilterStates(Action):
+    """Check whether the stack at a given depth match the state value, if so
+    transition to the destination, otherwise check other states."""
+    __slots__ = 'states', 'offset'
+
+    def __init__(self, states, offset):
+        assert isinstance(states, (list, tuple, set))
+        assert isinstance(offset, int)
+        super().__init__([], [])
+        # Set of states which can follow this transition.
+        self.states = set(states)
+        # Offset to poke for the state value.
+        self.offset = offset
+
+    def is_condition(self):
+        return True
+
+    def condition(self):
+        return self
+
+    def check_same_variable(self, other):
+        return isinstance(other, FilterStates) and self.offset == other.offset
+
+    def check_different_values(self, other):
+        assert isinstance(other, FilterStates)
+        return self.states.isdisjoint(other.states)
+
+    def __str__(self):
+        return "FilterStates({}, {})".format(self.states, self.offset)
 
 class FilterFlag(Action):
     """Define a filter which check for one value of the flag, and continue to the
@@ -213,6 +266,13 @@ class FilterFlag(Action):
 
     def condition(self):
         return self
+
+    def check_same_variable(self, other):
+        return isinstance(other, FilterFlag) and self.flag == other.flag
+
+    def check_different_values(self, other):
+        assert isinstance(other, FilterFlag)
+        return self.value != other.value
 
     def __str__(self):
         return "FilterFlag({}, {})".format(self.flag, self.value)
@@ -304,7 +364,7 @@ class Seq(Action):
         write = [wr for a in actions for wr in a.write]
         super().__init__(read, write)
         self.actions = tuple(actions)   # Ordered list of actions to execute.
-        assert all([not a.is_condition() for a in actions[1:]])
+        assert all([not a.is_condition() for a in actions])
         assert all([not a.update_stack() for a in actions[:-1]])
 
     def __str__(self):
@@ -312,12 +372,6 @@ class Seq(Action):
 
     def __repr__(self):
         return "Seq({})".format(repr(self.actions))
-
-    def is_condition(self):
-        return self.actions[0].is_condition()
-
-    def condition(self):
-        return self.actions[0]
 
     def update_stack(self):
         return self.actions[-1].update_stack()
