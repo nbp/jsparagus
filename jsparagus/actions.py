@@ -57,6 +57,11 @@ class Action:
         "Returns whether the current action stops the parser."
         return False
 
+    def rewrite_state_indexes(self, state_map):
+        """If the action contains any state index, use the map to map the old index to
+        the new indexes"""
+        return self
+
     def __eq__(self, other):
         if self.__class__ != other.__class__:
             return False
@@ -242,6 +247,12 @@ class FilterStates(Action):
         assert isinstance(other, FilterStates)
         return self.states.isdisjoint(other.states)
 
+    def rewrite_state_indexes(self, state_map):
+        """If the action contains any state index, use the map to map the old index to
+        the new indexes"""
+        states = list(state_map[s] for s in self.states)
+        return FilterStates(states, self.offset)
+
     def __str__(self):
         return "FilterStates({}, {})".format(self.states, self.offset)
 
@@ -395,6 +406,10 @@ class Seq(Action):
 
     def contains_accept(self):
         return self.actions[-1].contains_accept()
+
+    def rewrite_state_indexes(self, state_map):
+        actions = list(map(lambda a: a.rewrite_state_indexes(state_map), self.actions))
+        return Seq(actions)
 
 class SeqBuilder:
     """Aggregate multiple actions in one sequence. Reduce actions added to this

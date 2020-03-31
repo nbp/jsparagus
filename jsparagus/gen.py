@@ -1718,7 +1718,8 @@ class StateAndTransitions:
             k: state_map[s] for k, s in self.errors.items()
         }
         self.epsilon = [
-            (k, state_map[s]) for k, s in self.epsilon
+            (k.rewrite_state_indexes(state_map), state_map[s])
+            for k, s in self.epsilon
         ]
         self.backedges = set(
             Edge(state_map[s], k) for s, k in self.backedges
