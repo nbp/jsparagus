@@ -58,23 +58,10 @@ class Action:
         "Returns whether the current action stops the parser."
         return False
 
-    def maybe_add(self, other):
-        """Implement the fact of concatenating actions into a new action which can have
-        a single state instead of multiple states which are following each others."""
-        actions = []
-        if isinstance(self, Seq):
-            actions.extend(list(self.actions))
-        else:
-            actions.append(self)
-        if isinstance(other, Seq):
-            actions.extend(list(other.actions))
-        else:
-            actions.append(other)
-        if any([a.is_condition() for a in actions]):
-            return None
-        if any([a.update_stack() for a in actions[:-1]]):
-            return None
-        return Seq(actions)
+    def rewrite_state_indexes(self, state_map):
+        """If the action contains any state index, use the map to map the old index to
+        the new indexes"""
+        return self
 
     def __eq__(self, other):
         if self.__class__ != other.__class__:
@@ -266,6 +253,12 @@ class FilterStates(Action):
         assert isinstance(other, FilterStates)
         return self.states.isdisjoint(other.states)
 
+    def rewrite_state_indexes(self, state_map):
+        """If the action contains any state index, use the map to map the old index to
+        the new indexes"""
+        states = list(state_map[s] for s in self.states)
+        return FilterStates(states, self.offset)
+
     def __str__(self):
         return "FilterStates({}, {})".format(self.states, self.offset)
 
@@ -423,3 +416,7 @@ class Seq(Action):
 
     def contains_accept(self):
         return self.actions[-1].contains_accept()
+
+    def rewrite_state_indexes(self, state_map):
+        actions = list(map(lambda a: a.rewrite_state_indexes(state_map), self.actions))
+        return Seq(actions)
