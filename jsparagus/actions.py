@@ -40,15 +40,27 @@ class Action:
         "Return whether both conditional are checking non-overlapping values."
         raise TypeError("Action::check_different_values not implemented")
 
+    def follow_edge(self):
+        """Whether the execution of this action resume following the epsilon transition
+        (True) or if it breaks the graph epsilon transition (False) and returns
+        at a different location, defined by the top of the stack."""
+        return True
+
     def update_stack(self):
-        """Change the parser stack, and resume at a different location. If this function
-        is defined, then the function reduce_with should be implemented."""
+        """Whether the execution of this action changes the parser stack."""
         return False
 
-    def reduce_with(self):
-        "Returns the non-terminal with which this action is reducing with."
-        assert self.update_stack()
-        raise TypeError("Action::reduce_to not implemented.")
+    def update_stack_with(self):
+        """Returns a tuple which represents the mutation to be applied to the parser
+        stack. This tuple is composed of 3 elements, the first one is the
+        number of popped terms, the second is the forking terms, and
+        the third is the number of replayed terms.
+
+        The forking term can either be an ErrorToken or a non-terminal. It is
+        named the forking term as this is the term which change the path taken
+        after replaying the terms which are on the stack. Especially when there
+        is no pop-ed elements. """
+        raise TypeError("Action::update_stack_with not implemented")
 
     def shifted_action(self, shifted_term):
         "Returns the same action shifted by a given amount."
@@ -99,13 +111,12 @@ class Action:
     def __repr__(self):
         return str(self)
 
-
-class Reduce(Action):
-    """Define a reduce operation which pops N elements of he stack and pushes one
-    non-terminal. The replay attribute of a reduce action corresponds to the
+class Unwind(Action):
+    """Define an unwind operation which pops N elements of the stack and pushes one
+    non-terminal. The replay argument of an unwind action corresponds to the
     number of stack elements which would have to be popped and pushed again
-    using the parser table after reducing this operation. """
-    __slots__ = 'nt', 'replay', 'pop'
+    using the parser table after executing this operation."""
+    __slots__ = ['nt', 'replay', 'pop']
 
     def __init__(self, nt, pop, replay=0):
         name = nt.name
@@ -117,17 +128,45 @@ class Reduce(Action):
         self.replay = replay  # List of terms to shift back
 
     def __str__(self):
-        return "Reduce({}, {}, {})".format(self.nt, self.pop, self.replay)
+        return "Unwind({}, {}, {})".format(self.nt, self.pop, self.replay)
 
     def update_stack(self):
         return True
 
-    def reduce_with(self):
-        return self
+    def update_stack_with(self):
+        return (self.pop, self.nt, self.replay)
 
     def shifted_action(self, shifted_term):
-        return Reduce(self.nt, self.pop, replay=self.replay + 1)
+        return Unwind(self.nt, self.pop, replay = self.replay + 1)
 
+class Reduce(Action):
+    """Prevent the fall-through to the epsilon transition and returns to the shift
+    table execution to resume shifting or replaying terms."""
+    __slots__ = ['unwind']
+
+    def __init__(self, unwind):
+        assert isinstance(unwind, Unwind)
+        assert not unwind.is_condition()
+        assert not unwind.is_inconsistent()
+        assert not unwind.contains_accept()
+        super().__init__(unwind.read, unwind.write)
+        self.unwind = unwind
+
+    def __str__(self):
+        return "Reduce({})".format(str(self.unwind))
+
+    def update_stack(self):
+        return self.unwind
+
+    def update_stack_with(self):
+        return self.unwind.update_stack_with()
+
+    def follow_edge(self):
+        return False
+
+    def shifted_action(self, shifted_term):
+        unwind = self.unwind.shifted_action(shifted_term)
+        return Reduce(unwind)
 
 class Accept(Action):
     """This state terminate the parser by accepting the content consumed until
@@ -393,10 +432,10 @@ class Seq(Action):
         write = [wr for a in actions for wr in a.write]
         super().__init__(read, write)
         self.actions = tuple(actions)   # Ordered list of actions to execute.
-        assert all([not a.is_condition() for a in actions])
-        assert all([not isinstance(a, Seq) for a in actions])
-        assert all([not a.update_stack() for a in actions[:-1]])
-        assert all([not a.contains_accept() for a in actions[:-1]])
+        assert all(not a.is_condition() for a in actions)
+        assert all(not isinstance(a, Seq) for a in actions)
+        assert all(a.follow_edge() for a in actions[:-1])
+        assert all(not a.update_stack() for a in actions[:-1])
 
     def __str__(self):
         return "{{ {} }}".format("; ".join(map(str, self.actions)))
@@ -404,18 +443,21 @@ class Seq(Action):
     def __repr__(self):
         return "Seq({})".format(repr(self.actions))
 
+    def follow_edge(self):
+        return self.actions[-1].follow_edge()
+
     def update_stack(self):
         return self.actions[-1].update_stack()
 
-    def reduce_with(self):
-        return self.actions[-1].reduce_with()
+    def update_stack_with(self):
+        return self.actions[-1].update_stack_with()
+
+    def contains_accept(self):
+        return any(a.contains_accept() for a in self.actions)
 
     def shifted_action(self, shift):
         actions = list(map(lambda a: a.shifted_action(shift), self.actions))
         return Seq(actions)
-
-    def contains_accept(self):
-        return self.actions[-1].contains_accept()
 
     def rewrite_state_indexes(self, state_map):
         actions = list(map(lambda a: a.rewrite_state_indexes(state_map), self.actions))

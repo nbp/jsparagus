@@ -38,11 +38,12 @@ def write_python_parse_table(out, parse_table):
         assert isinstance(act, Action)
         assert not act.is_inconsistent()
         if isinstance(act, Reduce):
-            out.write("{}replay = [StateTermValue(0, {}, value, False)]\n".format(indent, repr(act.nt)))
-            if act.replay > 0:
-                out.write("{}replay = replay + parser.stack[-{}:]\n".format(indent, act.replay))
-            if act.replay + act.pop > 0:
-                out.write("{}del parser.stack[-{}:]\n".format(indent, act.replay + act.pop))
+            pop, nt, replay = act.update_stack_with()
+            out.write("{}replay = [StateTermValue(0, {}, value, False)]\n".format(indent, repr(nt)))
+            if replay > 0:
+                out.write("{}replay = replay + parser.stack[-{}:]\n".format(indent, replay))
+            if replay + pop > 0:
+                out.write("{}del parser.stack[-{}:]\n".format(indent, replay + pop))
             out.write("{}parser.shift_list(replay, lexer)\n".format(indent))
             return indent, False
         if isinstance(act, Accept):
