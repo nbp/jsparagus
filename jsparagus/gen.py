@@ -41,7 +41,7 @@ from .grammar import (Grammar,
                       Optional, Exclude, Literal, UnicodeCategory, Nt, Var,
                       End, NoLineTerminatorHere, ErrorSymbol,
                       LookaheadRule, lookahead_contains, lookahead_intersect)
-from .actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine,
+from .actions import (Accept, Action, Unwind, Reduce, Lookahead, CheckNotOnNewLine,
                       FilterFlag, PushFlag, PopFlag, FunCall, Seq, SeqBuilder)
 from . import emit
 from .runtime import ACCEPT, ErrorToken
@@ -1960,7 +1960,7 @@ class LR0Generator:
             # parse table. (TODO: this supposed that the canonical form did not
             # move the reduce action to be part of the production)
             pop = sum(1 for e in prod.rhs if on_stack(self.grammar.grammar, e))
-            term = Reduce(prod.nt, pop)
+            term = Reduce(Unwind(prod.nt, pop))
             expr = prod.reducer
             if expr is not None:
                 funcalls = []
@@ -2330,11 +2330,10 @@ class ParseTable:
         assert len(shifted) >= 1
         action = shifted[-1].term
         assert action.update_stack()
-        reducer = action.reduce_with()
-        assert isinstance(reducer, Reduce)
-        depth = reducer.pop + reducer.replay
+        pop, nt, replay = action.update_stack_with()
+        depth = pop + replay
         if depth > 0:
-            # We are readucing at least one element from the stack.
+            # We are reducing at least one element from the stack.
             stacked = [i for i, e in enumerate(shifted) if self.term_is_stacked(e.term)]
             if len(stacked) < depth:
                 # We have not shifted enough elements to cover the full reduce
@@ -2355,13 +2354,14 @@ class ParseTable:
         success_paths = []
         for path in self.shifted_path_to(depth, shifted_end):
             head = self.states[path[0].src]
-            if reducer.nt not in head.nonterminals:
+            if nt not in head.nonterminals:
                 error_paths.append(path)
                 continue
             success_paths.append(path)
-            assert reducer.nt in head.nonterminals
-            to = head.nonterminals[reducer.nt]
-            yield path, [Edge(path[0].src, reducer.nt), Edge(to, None)]
+            assert nt in head.nonterminals
+            to = head.nonterminals[nt]
+            yield path, [Edge(path[0].src, nt), Edge(to, None)]
+
         # When dealing with inconsistent states, we have to walk epsilon
         # backedges. This can lead us to have path where the head is not
         # reducing, increasing the number of error_paths.
@@ -2380,9 +2380,9 @@ class ParseTable:
                         "The Reduce path is: {}",
                         "The starting state is {}",
                         "{} backedges are: {}"
-                    ]).format(reducer.nt, " ".join(map(edge_str, path)), head,
+                    ]).format(nt, " ".join(map(edge_str, path)), head,
                               len(head.backedges), ", ".join(map(edge_str, head.backedges))))
-                    assert reducer.nt in head.nonterminals
+                    assert nt in head.nonterminals
 
     def aps_visitor(self, aps, visit):
         todo = []
@@ -2674,7 +2674,7 @@ class ParseTable:
                 if flag_in != None:
                     maybe_id_edges.add(Id(edge))
             edge = aps.stack[-1]
-            nt = edge.term.reduce_with().nt
+            _, nt, _ = edge.term.update_stack_with()
             rule = Eq(nt, edge, None)
             rules, free_vars = unify_with(rule, rules, free_vars)
             nts.add(nt)
@@ -3170,18 +3170,18 @@ class ParseTable:
             if aps.history == []:
                 return True
             last = aps.history[-1].term
-            is_reduce = not self.term_is_shifted(last)
+            is_unwind = isinstance(last, Action) and last.update_stack()
             has_shift_loop = len(aps.shift) != 1 + len(set(zip(aps.shift, aps.shift[1:])))
             can_reduce_later = True
             try:
                 can_reduce_later = self.debug_info[aps.shift[-1].src] >= len(aps.shift)
             except KeyError:
                 can_reduce_later = False
-            stop = is_reduce or has_shift_loop or not can_reduce_later
+            stop = is_unwind or has_shift_loop or not can_reduce_later
             # Record state which are reducing at most all the shifted states.
             save = stop and len(aps.shift) == 2
             save = save and isinstance(aps.shift[0].term, Nt)
-            save = save and is_reduce
+            save = save and is_unwind
             if save:
                 record.append(aps)
             return not stop
@@ -3191,8 +3191,7 @@ class ParseTable:
         for aps in record:
             assert aps.history != []
             assert aps.history[-1].term.update_stack()
-            reducer = aps.history[-1].term.reduce_with()
-            replay = reducer.replay
+            _, nt, replay = aps.history[-1].term.update_stack_with()
             before = [repr(e.term) for e in aps.stack[:-1]]
             after = [repr(e.term) for e in aps.history[:-1]]
             prod = before + ["\N{MIDDLE DOT}"] + after
@@ -3203,11 +3202,7 @@ class ParseTable:
                 replay += 1
             if replay > 0:
                 prod = prod[:-replay] + ["[lookahead:"] + prod[-replay:] + ["]"]
-            txt = "{}{} ::= {}".format(
-                prefix,
-                repr(aps.history[-1].term.reduce_with().nt),
-                " ".join(prod)
-            )
+            txt = "{}{} ::= {}".format(prefix, repr(nt), " ".join(prod))
             context.add(txt)
 
         if split_txt == None:

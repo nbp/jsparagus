@@ -129,7 +129,14 @@ class APS:
             # TODO: Add support for Lookahead and flag manipulation rules, as
             # both of these would invalide potential reduce paths.
             if a.update_stack():
-                reducer = a.reduce_with()
+                # TODO: When unwinding, do not add the reduced_path back to the
+                # shifted state, but add the non-terminal to the list of terms
+                # to be replayed. This is more accruate with the actual inner
+                # working of the parser and allow to extract the Unwind part of
+                # the Reduce action. This also imply that we might have an
+                # action state which is independent of the stack top.
+                assert not a.follow_edge() # Not supported yet.
+                pop, _nt, replay = a.update_stack_with()
                 for path, reduced_path in pt.reduce_path(prev_sh):
                     # reduce_paths contains the chains of state shifted,
                     # including epsilon transitions, in order to reduce the
@@ -174,11 +181,11 @@ class APS:
                     # computed here such that we can traverse the graph from
                     # `to` state, using the replayed terms.
                     new_rp = []
-                    if reducer.replay > 0:
+                    if replay > 0:
                         new_rp = [ edge.term for edge in path if pt.term_is_stacked(edge.term) ]
-                        new_rp = new_rp[-reducer.replay:]
+                        new_rp = new_rp[-replay:]
                     new_rp = new_rp + rp
-                    new_la = la[:max(len(la) - reducer.replay, 0)]
+                    new_la = la[:max(len(la) - replay, 0)]
                     yield APS(new_st, new_sh, new_la, new_rp, hs + [edge])
             else:
                 to = Edge(to, None)
