@@ -173,13 +173,13 @@ class APS:
                     # pushed on the stack as our lookahead. These terms are
                     # computed here such that we can traverse the graph from
                     # `to` state, using the replayed terms.
-                    new_replay = []
+                    new_rp = []
                     if reducer.replay > 0:
-                        new_replay = [ edge.term for edge in path if pt.term_is_stacked(edge.term) ]
-                        new_replay = new_replay[-reducer.replay:]
-                    new_replay = new_replay + rp
+                        new_rp = [ edge.term for edge in path if pt.term_is_stacked(edge.term) ]
+                        new_rp = new_rp[-reducer.replay:]
+                    new_rp = new_rp + rp
                     new_la = la[:max(len(la) - reducer.replay, 0)]
-                    yield APS(new_st, new_sh, new_la, new_replay, hs + [edge])
+                    yield APS(new_st, new_sh, new_la, new_rp, hs + [edge])
             else:
                 to = Edge(to, None)
                 yield APS(st, prev_sh + [to], la, rp, hs + [edge])

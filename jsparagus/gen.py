@@ -2262,7 +2262,7 @@ class ParseTable:
                     print("\nVisiting:\n{}".format(s_it))
                 for k, sk_it in s_it.transitions().items():
                     locations = sk_it.lr_items
-                    if not self.is_term_shifted(k):
+                    if not self.term_is_shifted(k):
                         locations = OrderedFrozenSet()
                     is_new, sk = self.new_state(locations)
                     if is_new:
@@ -2272,8 +2272,13 @@ class ParseTable:
                     self.add_edge(s, k, sk.index)
         consume(visit_grammar(), progress)
 
-    def is_term_shifted(self, term):
-        return not (isinstance(term, Action) and term.update_stack())
+    def term_is_stacked(self, term):
+        """Returns whether the given term exists on the stack or not."""
+        return not isinstance(term, Action)
+
+    def term_is_shifted(self, term):
+        """Returns whether the given term use the destination edge."""
+        return not isinstance(term, Action) or term.follow_edge()
 
     def is_valid_path(self, path, state = None):
         """This function is used to check a list of edges and returns whether it
@@ -2303,10 +2308,10 @@ class ParseTable:
         state = right_of[0].src
         assert isinstance(state, int)
         for edge in self.states[state].backedges:
-            if not self.is_term_shifted(edge.term):
+            if not self.term_is_shifted(edge.term):
                 print(repr(edge))
                 print(self.states[edge.src])
-            assert self.is_term_shifted(edge.term)
+            assert self.term_is_shifted(edge.term)
             if self.term_is_stacked(edge.term):
                 s_n = n - 1
                 if n == 0:
@@ -2378,9 +2383,6 @@ class ParseTable:
                               len(head.backedges), ", ".join(map(edge_str, head.backedges))))
                     assert reducer.nt in head.nonterminals
 
-    def term_is_stacked(self, term):
-        return not isinstance(term, Action)
-
     def aps_visitor(self, aps, visit):
         todo = []
         todo.append(aps)
@@ -2427,7 +2429,7 @@ class ParseTable:
         enough context to disambiguate the inconsistency of the given state."""
         assert isinstance(state, int)
         def not_interesting(aps):
-            reduce_list = [e for e in aps.history if self.is_term_shifted(e.term)]
+            reduce_list = [e for e in aps.history if self.term_is_shifted(e.term)]
             has_reduce_loop = len(reduce_list) != len(set(reduce_list))
             return has_reduce_loop
 
@@ -2495,7 +2497,7 @@ class ParseTable:
         return False, collect
 
         def visit(aps):
-            reduce_list = [e for e in aps.history if self.is_term_shifted(e.term)]
+            reduce_list = [e for e in aps.history if self.term_is_shifted(e.term)]
             has_reduce_loop = len(reduce_list) != len(set(reduce_list))
             has_lookahead = len(aps.lookahead) >= 1
             stop = has_shift_loop or has_stack_loop or has_lookahead
@@ -2527,7 +2529,7 @@ class ParseTable:
         def visit(aps):
             # Note, this suppose that we are not considering flags when
             # computing, as flag might prevent some lookahead investigations.
-            first_reduce = next((e for e in aps.history[:-1] if not self.is_term_shifted(e.term)), None)
+            first_reduce = next((e for e in aps.history[:-1] if not self.term_is_shifted(e.term)), None)
             if first_reduce:
                 reduce_key = (first_reduce, aps.shift[0].src, aps.history[-1].term)
             has_seen_edge_after_reduce = first_reduce and reduce_key in seen_edge_after_reduce
@@ -2774,7 +2776,7 @@ class ParseTable:
             # No need to consider any action beyind the first reduced action
             # since the reduced action is in charge of replaying the lookahead
             # terms.
-            actions = list(keep_until(actions[:-1], lambda edge: not self.is_term_shifted(edge.term)))
+            actions = list(keep_until(actions[:-1], lambda edge: not self.term_is_shifted(edge.term)))
             assert all(isinstance(edge.term, Action) for edge in actions)
 
             # Change the order of the shifted term, shift all actions by 1 with
@@ -2814,7 +2816,7 @@ class ParseTable:
                 delayed = OrderedSet()
                 new_shift_map = collections.defaultdict(lambda: [])
                 recurse = False
-                if not self.is_term_shifted(term):
+                if not self.term_is_shifted(term):
                     # There is no more target after a reduce action.
                     actions_list = []
                 for target, actions in actions_list:
@@ -3000,10 +3002,10 @@ class ParseTable:
             # which is not yet handled by the backend, as we have no shift
             # actions to emulate what the shifting would have accomplished.
             last_edge = aps_list[0].history[-1]
-            if not self.is_term_shifted(last_edge.term) \
+            if not self.term_is_shifted(last_edge.term) \
                and last_edge.term.contains_accept():
                 return history
-            if not self.is_term_shifted(last_edge.term) \
+            if not self.term_is_shifted(last_edge.term) \
                and len(aps_list[0].shift) <= 2:
                 history = aps_list[0].history
 
@@ -3033,7 +3035,7 @@ class ParseTable:
                 aps_by_term = collections.defaultdict(list)
                 for aps_next in aps.shift_next(self):
                     edge = aps_next.history[0]
-                    if self.is_term_shifted(edge.term):
+                    if self.term_is_shifted(edge.term):
                         continue
                     aps_by_term[edge.term].append(aps_next)
                 for aps_term_list in aps_by_term.values():
@@ -3047,7 +3049,7 @@ class ParseTable:
                 # is worth folding.
                 if len(history) < 2:
                     continue
-                assert not self.is_term_shifted(history[-1].term)
+                assert not self.term_is_shifted(history[-1].term)
                 yield # progress bar
                 head = history[0]
                 if verbose:
@@ -3145,7 +3147,7 @@ class ParseTable:
             if s is None:
                 continue
             for t, d in s.epsilon:
-                if self.is_term_shifted(t):
+                if self.term_is_shifted(t):
                     continue
                 for path, _ in self.reduce_path([Edge(s.index, t)]):
                     for i, edge in enumerate(path):
@@ -3167,7 +3169,7 @@ class ParseTable:
             if aps.history == []:
                 return True
             last = aps.history[-1].term
-            is_reduce = not self.is_term_shifted(last)
+            is_reduce = not self.term_is_shifted(last)
             has_shift_loop = len(aps.shift) != 1 + len(set(zip(aps.shift, aps.shift[1:])))
             can_reduce_later = True
             try:
@@ -3178,7 +3180,7 @@ class ParseTable:
             # Record state which are reducing at most all the shifted states.
             save = stop and len(aps.shift) == 2
             save = save and isinstance(aps.shift[0].term, Nt)
-            save = save and not self.is_term_shifted(aps.history[-1].term)
+            save = save and is_reduce
             if save:
                 record.append(aps)
             return not stop
