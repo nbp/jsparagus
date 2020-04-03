@@ -1985,10 +1985,7 @@ class LR0Generator:
             if expr is not None:
                 funcalls = []
                 callmethods_to_funcalls(expr, pop, "value", 0, funcalls)
-                if funcalls[-1].contains_accept():
-                    term = Seq(funcalls)
-                else:
-                    term = Seq(funcalls + [term])
+                term = Seq(funcalls + [term])
         else:
             # No edges after the reduce operation.
             return
