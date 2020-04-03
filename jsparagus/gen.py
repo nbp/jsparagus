@@ -3027,7 +3027,8 @@ class ParseTable:
         def capture_reduce_actions():
             "Yield reduce action and the matching APS"
             for s in self.states:
-                if not s.epsilon:
+                term, _ = next(iter(s.epsilon), (None, None))
+                if term is None or not self.term_is_shifted(term):
                     continue
                 aps = APS.start(s.index)
                 aps_by_term = collections.defaultdict(list)
