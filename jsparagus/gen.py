@@ -2057,7 +2057,7 @@ class ParseTable:
         "exec_modes"
     ]
 
-    def __init__(self, grammar, verbose = False, progress = False, debug = False):
+    def __init__(self, grammar, verbose = False, progress = False, debug = False, optimize=True):
         self.actions = []
         self.states = []
         self.state_cache = {}
@@ -2071,11 +2071,12 @@ class ParseTable:
         # TODO: Optimize chains of actions into sequences.
         # Optimize by removing unused states.
         self.remove_all_unreachable_state(verbose, progress)
-        # Fold sequences of unconditional reduce actions, and remove unused
-        # non-terminals.
-        self.fold_reduce_cascade(verbose, progress)
-        # Fold paths which have the same ending.
-        self.fold_identical_endings(verbose, progress)
+        if optimize:
+            # Fold sequences of unconditional reduce actions, and remove unused
+            # non-terminals.
+            self.fold_reduce_cascade(verbose, progress)
+            # Fold paths which have the same ending.
+            self.fold_identical_endings(verbose, progress)
         # Split shift states from epsilon states.
         self.group_epsilon_states(verbose, progress)
 
@@ -3252,7 +3253,7 @@ def generate_parser(out, source, *, verbose=False, progress=False, debug=False,
 def compile(grammar, verbose = False):
     assert isinstance(grammar, Grammar)
     out = io.StringIO()
-    generate_parser(out, grammar)
+    generate_parser(out, grammar, verbose=verbose)
     scope = {}
     if verbose:
         with open("parse_with_python.py", "w") as f:
