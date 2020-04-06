@@ -2360,7 +2360,7 @@ class ParseTable:
             success_paths.append(path)
             assert nt in head.nonterminals
             to = head.nonterminals[nt]
-            yield path, [Edge(path[0].src, nt), Edge(to, None)]
+            yield path, [Edge(path[0].src, None)]
 
         # When dealing with inconsistent states, we have to walk epsilon
         # backedges. This can lead us to have path where the head is not
@@ -2537,17 +2537,25 @@ class ParseTable:
         def visit(aps):
             # Note, this suppose that we are not considering flags when
             # computing, as flag might prevent some lookahead investigations.
+            reduce_key = None
             first_reduce = next((e for e in aps.history[:-1] if not self.term_is_shifted(e.term)), None)
             if first_reduce:
-                reduce_key = (first_reduce, aps.shift[0].src, aps.history[-1].term)
-            has_seen_edge_after_reduce = first_reduce and reduce_key in seen_edge_after_reduce
+                is_reduced_term = len(aps.history) >= 2 \
+                    and not self.term_is_shifted(aps.history[-2].term)
+                if not is_reduced_term:
+                    last_edge = aps.history[-1]
+                    reduce_key = (first_reduce, aps.shift[0].src, last_edge.term)
+            has_seen_edge_after_reduce = reduce_key and reduce_key in seen_edge_after_reduce
             has_lookahead = len(aps.lookahead) >= 1
             stop = has_seen_edge_after_reduce or has_lookahead
-            # print(aps_str(aps, "\tvisitor"))
+            # print("stop: {}, size lookahead: {}, seen_edge_after_reduce: {}".format(
+            #     stop, len(aps.lookahead), repr(reduce_key)
+            # ))
+            # print(aps.string("\tvisitor"))
             if stop:
                 if has_lookahead:
                     record.append(aps)
-            if first_reduce:
+            if reduce_key:
                 seen_edge_after_reduce.add(reduce_key)
             return not stop
         self.aps_visitor(APS.start(state), visit)
@@ -2768,6 +2776,9 @@ class ParseTable:
         # Find the list of terminals following each actions (even reduce
         # actions).
         assert all(len(aps.lookahead) >= 1 for aps in aps_lanes)
+        if self.debug_info:
+            for aps in aps_lanes:
+                print(str(aps))
         maybe_unreachable_set = set()
         # For each shifted term, associate a set of state and actions which
         # would have to be executed.
@@ -2778,7 +2789,7 @@ class ParseTable:
             assert actions[-1].term == aps.lookahead[0]
             src = actions[-1].src
             term = actions[-1].term
-            # No need to consider any action beyind the first reduced action
+            # No need to consider any action behind the first reduced action
             # since the reduced action is in charge of replaying the lookahead
             # terms.
             actions = list(keep_until(actions[:-1], lambda edge: not self.term_is_shifted(edge.term)))
@@ -2845,17 +2856,19 @@ class ParseTable:
                 locations = OrderedFrozenSet(locations)
                 delayed = OrderedFrozenSet(delayed)
                 is_new, new_target = self.new_state(locations, delayed)
-                # print("{}is_new = {}, index = {}".format(depth, is_new, new_target.index))
-                # print("{}Add: {} -- {} --> {}".format(depth, state.index, str(term), new_target.index))
                 edges[term] = new_target.index
-                # print("{}continue: (is_new: {}) or (recurse: {})".format(depth, is_new, recurse))
+                if self.debug_info:
+                    print("{}is_new = {}, index = {}".format(depth, is_new, new_target.index))
+                    print("{}Add: {} -- {} --> {}".format(depth, state.index, str(term), new_target.index))
+                    print("{}continue: (is_new: {}) or (recurse: {})".format(depth, is_new, recurse))
                 if is_new or recurse:
                     restore_edges(new_target, new_shift_map, depth + "  ")
 
             self.clear_edges(state, maybe_unreachable_set)
             for term, target in edges.items():
                 self.add_edge(state, term, target)
-            # print("{}replaced by {}\n".format(depth, state))
+            if self.debug_info:
+                print("{}replaced by {}\n".format(depth, state))
 
         state = self.states[s]
         restore_edges(state, shift_map, "")
@@ -3058,15 +3071,15 @@ class ParseTable:
         stop going deeper, as we entered a different production. """
         depths = collections.defaultdict(lambda: [])
         for s in self.states:
-            if s is None:
+            if s is None or not s.epsilon:
                 continue
-            for t, d in s.epsilon:
-                if self.term_is_shifted(t):
+            aps = APS.start(s.index)
+            for aps_next in aps.shift_next(self):
+                if len(aps_next.shift) == 1:
                     continue
-                for path, _ in self.reduce_path([Edge(s.index, t)]):
-                    for i, edge in enumerate(path):
-                        depths[edge.src].append(i + 1)
-        depths = {s: max(ds) for s, ds in depths.items()}
+                for i, edge in enumerate(aps_next.stack):
+                    depths[edge.src].append(i + 1)
+        depths = { s: max(ds) for s, ds in depths.items() }
         return depths
 
     def debug_context(self, state, split_txt="; ", prefix=""):
@@ -3092,7 +3105,7 @@ class ParseTable:
                 can_reduce_later = False
             stop = is_unwind or has_shift_loop or not can_reduce_later
             # Record state which are reducing at most all the shifted states.
-            save = stop and len(aps.shift) == 2
+            save = stop and len(aps.shift) == 1
             save = save and isinstance(aps.shift[0].term, Nt)
             save = save and is_unwind
             if save:
@@ -3137,7 +3150,7 @@ def generate_parser(out, source, *, verbose=False, progress=False, debug=False,
     if isinstance(source, Grammar):
         grammar = CanonicalGrammar(source)
         parser_data = generate_parser_states(
-            source, verbose=verbose, progress=progress)
+            source, verbose=verbose, progress=progress, debug=debug)
     elif isinstance(source, ParseTable):
         parser_data = source
         parser_data.debug_info = debug
@@ -3158,10 +3171,10 @@ def generate_parser(out, source, *, verbose=False, progress=False, debug=False,
             raise ValueError("Unexpected parser_data kind")
 
 
-def compile(grammar, verbose=False):
+def compile(grammar, verbose=False, debug=False):
     assert isinstance(grammar, Grammar)
     out = io.StringIO()
-    generate_parser(out, grammar, verbose=verbose)
+    generate_parser(out, grammar, verbose=verbose, debug=debug)
     scope = {}
     if verbose:
         with open("parse_with_python.py", "w") as f:
