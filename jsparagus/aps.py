@@ -65,7 +65,8 @@ class APS:
     #   history: This is the list of edges visited since the starting state.
     #
     slots = 'stack', 'shift', 'lookahead', 'replay', 'reducing', 'history'
-    def __init__(self, st, sh, la, rp, hs, reducing=False):
+    def __init__(self, state, st, sh, la, rp, hs, reducing=False):
+        self.state = state
         self.stack = st
         self.shift = sh
         self.lookahead = la
@@ -77,6 +78,8 @@ class APS:
     def is_valid_self(self):
         "Returns whether this structure contains the right content."
         check = True
+        # self.state == pt.states[self.history[-1].src][self.history[-1].term]
+        check &= isinstance(self.state, int)
         check &= all(isinstance(st, Edge) for st in self.stack)
         check &= all(isinstance(sh, Edge) for sh in self.shift)
         check &= self.stack[0].src == self.shift[0].src
@@ -90,7 +93,7 @@ class APS:
     def start(state):
         "Return an Abstract Parser State starting at a given state of a parse table"
         edge = Edge(state, None)
-        return APS([edge], [edge], [], [], [])
+        return APS(state, [edge], [edge], [], [], [])
 
     def shift_next(self, pt):
         """Visit all the states of the parse table, as-if we were running a
@@ -112,25 +115,27 @@ class APS:
 
         """
         st, sh, la, rp, hs = self.stack, self.shift, self.lookahead, self.replay, self.history
-        last_edge = sh[-1]
-        state = pt.states[last_edge.src]
+        state = pt.states[self.state]
+        state_match_shift_end = self.state == self.shift[-1].src
         if self.replay == []:
+            assert state_match_shift_end
             for term, to in state.shifted_edges():
-                edge = Edge(last_edge.src, term)
+                edge = Edge(self.state, term)
                 new_sh = self.shift[:-1] + [edge]
                 to = Edge(to, None)
-                yield APS(st, new_sh + [to], la + [term], rp, hs + [edge])
-        else:
+                yield APS(to.src, st, new_sh + [to], la + [term], rp, hs + [edge])
+        elif state_match_shift_end:
             term = self.replay[0]
             rp = self.replay[1:]
             if term in state:
-                edge = Edge(last_edge.src, term)
+                edge = Edge(self.state, term)
                 new_sh = self.shift[:-1] + [edge]
                 to = state[term]
                 to = Edge(to, None)
-                yield APS(st, new_sh + [to], la, rp, hs + [edge])
+                yield APS(to.src, st, new_sh + [to], la, rp, hs + [edge])
 
         if self.reducing:
+            assert state_match_shift_end
             # When reducing, do not attempt to execute epsilon actions. As
             # reduce actions are split into Unwind and replay, we need to
             # distinguish whether the replayed term is coming from a reduce
@@ -141,20 +146,28 @@ class APS:
         term = None
         rp = self.replay
         for a, to in state.epsilon:
-            edge = Edge(last_edge.src, a)
+            edge = Edge(self.state, a)
             prev_sh = self.shift[:-1] + [edge]
             # TODO: Add support for Lookahead and flag manipulation rules, as
-            # both of these would invalide potential reduce paths.
-            if a.update_stack():
-                # TODO: When unwinding, do not add the reduced_path back to the
-                # shifted state, but add the non-terminal to the list of terms
-                # to be replayed. This is more accruate with the actual inner
-                # working of the parser and allow to extract the Unwind part of
-                # the Reduce action. This also imply that we might have an
-                # action state which is independent of the stack top.
+            # both of these would invalidate potential reduce paths.
+            if a.update_stack() and a.update_stack_with() == (0, None, -1):
+                assert len(self.replay) >= 1
+                term = self.replay[0]
+                rp = self.replay[1:]
+                sh_state = self.shift[-1].src
+                sh_edge = Edge(sh_state, term)
+                sh_to = pt.states[sh_state][term]
+                sh_to = Edge(sh_to, None)
+                new_sh = self.shift[:-1] + [sh_edge, sh_to]
+                new_hs = hs + [hs_edge]
+                assert sh_to.src == a.replay_dest
+                yield APS(to, st, new_sh, la, rp, hs + [edge])
+            elif a.update_stack():
                 reducing = not a.follow_edge()
-                assert reducing # Not supported yet.
                 pop, nt, replay = a.update_stack_with()
+                assert pop >= 0
+                assert nt is not None
+                assert replay >= 0
                 for path, reduced_path in pt.reduce_path(prev_sh):
                     # reduce_paths contains the chains of state shifted,
                     # including epsilon transitions, in order to reduce the
@@ -204,10 +217,21 @@ class APS:
                         new_rp = new_rp + stacked_terms[-replay:]
                     new_rp = new_rp + rp
                     new_la = la[:max(len(la) - replay, 0)]
-                    yield APS(new_st, new_sh, new_la, new_rp, hs + [edge], reducing=reducing)
+
+                    # If we are reducing, this implies that we are not
+                    # following the edge of the reducing action, and resume the
+                    # execution at the last edge of the shift action. At this
+                    # point the execution and the stack diverge from standard
+                    # LR parser. However, the stack is still manipulated
+                    # through Unwind and Replay actions but the state which is
+                    # executed no longer matches the last element of the
+                    # shifted term or action.
+                    if reducing:
+                        to = new_sh[-1].src
+                    yield APS(to, new_st, new_sh, new_la, new_rp, hs + [edge], reducing=reducing)
             else:
                 to = Edge(to, None)
-                yield APS(st, prev_sh + [to], la, rp, hs + [edge])
+                yield APS(to.src, st, prev_sh + [to], la, rp, hs + [edge])
 
     def string(self, name = "aps"):
         return """{}.stack = [{}]
