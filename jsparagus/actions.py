@@ -537,14 +537,14 @@ class SeqBuilder:
             self.stashed_actions = []
 
             # The value of the non-terminal pushed on the stack after a
-            # replayed action is going to be stored in the "value" variable.
+            # replayed action is going to be stored in the "value" variable. We
+            # give it another name.
             name = "action" + str(len(self.actions))
-            self.popped -= 1
             if len(self.actions) >= 1 and isinstance(self.actions[-1], FunCall):
-                self.offset_stack.append(name)
+                self.replay.append(name)
                 self.actions[-1] = self.actions[-1].replace_set_to(name)
             else:
-                self.offset_stack.append(len(self.replay) + 1)
+                self.replay.append(len(self.replay) + 1)
 
         elif isinstance(term, Seq):
             for act in term.actions:
