@@ -111,6 +111,30 @@ class Action:
     def __repr__(self):
         return str(self)
 
+class Replay(Action):
+    """Replay a term which was previously saved by the Unwind function. Note that
+    this does not Shift a term given as argument as the replay action should
+    always be garanteed and that we want to maximize the sharing of code when
+    possible."""
+    __slots__ = "replay_dest",
+
+    def __init__(self, replay_dest):
+        super().__init__([], [])
+        assert isinstance(replay_dest, int)
+        self.replay_dest = replay_dest
+
+    def __str__(self):
+        return "Replay({})".format(str(replay_dest))
+
+    def update_stack(self):
+        return True
+
+    def update_stack_with(self):
+        return (0, None, -1)
+
+    def rewrite_state_indexes(self, state_map):
+        return Replay(state_map[self.replay_dest])
+
 class Unwind(Action):
     """Define an unwind operation which pops N elements of the stack and pushes one
     non-terminal. The replay argument of an unwind action corresponds to the
