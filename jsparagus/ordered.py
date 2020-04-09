@@ -66,6 +66,17 @@ class OrderedSet:
                 self.remove(v)
         return self
 
+    def isdisjoint(self, other):
+        check = self
+        against = other
+        if len(other) < len(self):
+            check = other
+            against = self
+        for v in check:
+            if v in against:
+                return False
+        return True
+
 
 class OrderedFrozenSet:
     """Like frozenset(), but iteration order is insertion order.
@@ -110,3 +121,15 @@ class OrderedFrozenSet:
 
     def __sub__(self, other):
         return OrderedFrozenSet(v for v in self._data if v not in other)
+
+    def isdisjoint(self, other):
+        check = self
+        against = other
+        if len(other) < len(self):
+            check = other
+            against = self
+        for v in check:
+            if v in against:
+                return False
+        return True
+
