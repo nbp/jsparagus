@@ -6,16 +6,14 @@ from ..runtime import SPECIAL_CASE_TAG, ErrorToken
 from ..ordered import OrderedSet
 
 def write_python_parse_table(out, parse_table):
-    shift_count = parse_table.count_shift_states()
-    action_count = parse_table.count_action_states()
     out.write("from jsparagus import runtime\n")
     if any(isinstance(key, Nt) for key in parse_table.nonterminals):
         out.write("from jsparagus.runtime import Nt, InitNt, End, ErrorToken, StateTermValue, ShiftError, ShiftAccept\n")
     out.write("\n")
 
     def write_epsilon_transition(indent, dest):
-        if dest >= shift_count:
-            assert dest < shift_count + action_count
+        if parse_table.states[dest].epsilon != []:
+            assert dest < len(parse_table.states)
             # This is a transition to an action.
             out.write("{}state_{}_actions(parser, lexer)\n".format(indent, dest))
         else:
