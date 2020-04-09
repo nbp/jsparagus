@@ -3139,28 +3139,38 @@ class ParseTable:
         # these states to be replaced by edges going to the reference state.
         if verbose or progress:
             print("Fold identical endings.")
-        maybe_unreachable = set()
-        def rewrite_backedges(state_list):
+        def rewrite_backedges(state_list, state_map, maybe_unreachable):
             # All states have the same outgoing edges. Thus we replace all of
-            # them by a single state.
-            ref = state_list[0]
-            replace_edges = [e for s in state_list[1:] for e in s.backedges]
+            # them by a single state. We do that by replacing edges of which
+            # are targeting the state in the state_list by edges targetting the
+            # ref state.
+            ref = state_list.pop()
+            replace_edges = [e for s in state_list for e in s.backedges]
             hit = False
             for src, term in replace_edges:
                 src = self.states[src]
+                old_dest = src[term]
                 # print("replace {} -- {} --> {}, by {} -- {} --> {}".format(src.index, term, src[term], src.index, term, ref.index))
                 self.replace_edge(src, term, ref.index, maybe_unreachable)
+                state_map[old_dest] = ref.index
                 hit = True
             return hit
 
         def rewrite_if_same_outedges(state_list):
+            maybe_unreachable = set()
             outedges = collections.defaultdict(lambda: [])
             for s in state_list:
                 outedges[tuple(s.edges())].append(s)
             hit = False
+            state_map = { i: i for i, _ in enumerate(self.states) }
             for same in outedges.values():
                 if len(same) > 1:
-                    hit = rewrite_backedges(same) or hit
+                    hit = rewrite_backedges(same, state_map, maybe_unreachable) or hit
+            if hit:
+                self.remove_unreachable_states(maybe_unreachable)
+                self.rewrite_state_indexes(state_map)
+                self.remove_all_unreachable_state(verbose, progress)
+                maybe_unreachable = set()
             return hit
 
         def visit_table():
@@ -3170,8 +3180,6 @@ class ParseTable:
                 hit = rewrite_if_same_outedges(self.states)
         consume(visit_table(), progress)
 
-        self.remove_unreachable_states(maybe_unreachable)
-        self.remove_all_unreachable_state(verbose, progress)
 
 
     def group_epsilon_states(self, verbose, progress):
