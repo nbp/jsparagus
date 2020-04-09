@@ -1694,9 +1694,11 @@ class StateAndTransitions:
                 return True
             iterator = iter(self.epsilon)
             first, _ = next(iterator)
-            if all(first.check_same_variable(k) for k, s in iterator):
+            if any(not first.check_same_variable(k) for k, s in iterator):
+                iterator = iter(self.epsilon)
+                first, _ = next(iterator)
                 return True
-            pairs = itertools.combination((k for k, s in self.epsilon), 2)
+            pairs = itertools.combinations((k for k, s in self.epsilon), 2)
             if any(not k1.check_different_values(k2) for k1, k2 in pairs):
                 return True
         else:
