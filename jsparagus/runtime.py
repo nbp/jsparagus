@@ -193,8 +193,8 @@ class Parser:
             assert isinstance(self.stack[1].term, Nt)
             return self.stack[1].value
 
-    def state_at_depth(self, depth):
-        return self.stack[-depth - 1].state
+    def top_state(self, depth):
+        return self.stack[-1].state
 
     def check_not_on_new_line(self, lexer, peek):
         if peek <= 0:

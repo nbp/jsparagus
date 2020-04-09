@@ -284,18 +284,15 @@ class CheckNotOnNewLine(Action):
         return "CheckNotOnNewLine({})".format(self.offset)
 
 class FilterStates(Action):
-    """Check whether the stack at a given depth match the state value, if so
-    transition to the destination, otherwise check other states."""
-    __slots__ = 'states', 'offset'
+    """Check whether the stack at the top matches the state value, if so transition
+    to the destination, otherwise check other states."""
+    __slots__ = 'states',
 
-    def __init__(self, states, offset):
+    def __init__(self, states):
         assert isinstance(states, (list, tuple, OrderedFrozenSet))
-        assert isinstance(offset, int)
         super().__init__([], [])
         # Set of states which can follow this transition.
-        self.states = OrderedFrozenSet(states)
-        # Offset to poke for the state value.
-        self.offset = offset
+        self.states = OrderedFrozenSet(sorted(states))
 
     def is_condition(self):
         return True
@@ -304,7 +301,7 @@ class FilterStates(Action):
         return self
 
     def check_same_variable(self, other):
-        return isinstance(other, FilterStates) and self.offset == other.offset
+        return isinstance(other, FilterStates)
 
     def check_different_values(self, other):
         assert isinstance(other, FilterStates)
@@ -314,10 +311,10 @@ class FilterStates(Action):
         """If the action contains any state index, use the map to map the old index to
         the new indexes"""
         states = list(state_map[s] for s in self.states)
-        return FilterStates(states, self.offset)
+        return FilterStates(states)
 
     def __str__(self):
-        return "FilterStates({}, {})".format(self.states, self.offset)
+        return "FilterStates({})".format(self.states)
 
 class FilterFlag(Action):
     """Define a filter which check for one value of the flag, and continue to the

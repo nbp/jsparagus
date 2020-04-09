@@ -186,18 +186,23 @@ class RustActionWriter:
             self.write("}")
             self.write_epsilon_transition(dest)
         elif isinstance(first_act, FilterStates):
-            value = -first_act.offset
-            self.write("match parser.state_at_depth({}) {", value)
-            with indent(self):
-                for act, dest in state.edges():
-                    assert first_act.check_same_variable(act)
-                    self.write("{} => {{", " | ".join(map(str, act.states)))
-                    with indent(self):
-                        self.write_epsilon_transition(dest)
-                    self.write("}")
-                self.write("_ => panic!(\"Unexpected state value.\")")
-            self.write("}")
-            pass
+            value = 0
+            if len(state.epsilon) == 1:
+                # This is an attempt to avoid huge unending compilations.
+                _, dest = next(iter(state.epsilon), (None, None))
+                self.write("// parser.top_state() in [{}]", " | ".join(map(str, first_act.states)))
+                self.write_epsilon_transition(dest)
+            else:
+                self.write("match parser.top_state() {")
+                with indent(self):
+                    for act, dest in state.edges():
+                        assert first_act.check_same_variable(act)
+                        self.write("{} => {{", " | ".join(map(str, act.states)))
+                        with indent(self):
+                            self.write_epsilon_transition(dest)
+                        self.write("}")
+                    self.write("_ => panic!(\"Unexpected state value.\")")
+                self.write("}")
         else:
             raise ValueError("Unexpected action type")
 
@@ -660,7 +665,7 @@ class RustParserWriter:
         self.write(1, "fn pop(&mut self) -> TermValue<Value>;")
         self.write(1, "fn replay(&mut self, tv: TermValue<Value>);")
         self.write(1, "fn epsilon(&mut self, state: usize);")
-        self.write(1, "fn state_at_depth(&self, depth: usize) -> usize;")
+        self.write(1, "fn top_state(&self) -> usize;")
         self.write(1, "fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool>;")
         self.write(0, "}")
         self.write(0, "")

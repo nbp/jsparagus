@@ -48,8 +48,7 @@ def write_python_parse_table(out, parse_table):
             out.write("{}    return\n".format(indent))
             return indent, True
         if isinstance(act, FilterStates):
-            out.write("{}if parser.state_at_depth({}) in [{}]:\n".format(
-                indent, -act.offset, ", ".join(map(str, act.states))))
+            out.write("{}if parser.top_state() in [{}]:\n".format(indent, ", ".join(map(str, act.states))))
             return indent + "    ", True
         if isinstance(act, FilterFlag):
             out.write("{}if parser.flags[{}][-1] == {}:\n".format(indent, act.flag, act.value))
