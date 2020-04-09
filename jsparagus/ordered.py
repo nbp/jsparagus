@@ -78,6 +78,17 @@ class OrderedSet(typing.Generic[T]):
                 self.remove(v)
         return self
 
+    def isdisjoint(self, other):
+        check = self
+        against = other
+        if len(other) < len(self):
+            check = other
+            against = self
+        for v in check:
+            if v in against:
+                return False
+        return True
+
 
 class OrderedFrozenSet(typing.Generic[T]):
     """Like frozenset(), but iteration order is insertion order.
@@ -125,3 +136,15 @@ class OrderedFrozenSet(typing.Generic[T]):
 
     def __sub__(self, other: OrderedFrozenSet[T]) -> OrderedFrozenSet[T]:
         return OrderedFrozenSet(v for v in self._data if v not in other)
+
+    def isdisjoint(self, other):
+        check = self
+        against = other
+        if len(other) < len(self):
+            check = other
+            against = self
+        for v in check:
+            if v in against:
+                return False
+        return True
+
