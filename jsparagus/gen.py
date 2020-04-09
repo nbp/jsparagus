@@ -1709,6 +1709,10 @@ class StateAndTransitions:
             yield (k, s)
 
     def rewrite_state_indexes(self, state_map):
+        def apply_on_term(term):
+            if isinstance(term, Action):
+                return term.rewrite_state_indexes(state_map)
+            return term
         self.index = state_map[self.index]
         self.terminals = {
             k: state_map[s] for k, s in self.terminals.items()
@@ -1719,12 +1723,12 @@ class StateAndTransitions:
         self.errors = {
             k: state_map[s] for k, s in self.errors.items()
         }
-        self.epsilon = [
+        self.epsilon = list(OrderedSet([
             (k.rewrite_state_indexes(state_map), state_map[s])
             for k, s in self.epsilon
-        ]
+        ]))
         self.backedges = set(
-            Edge(state_map[s], k) for s, k in self.backedges
+            Edge(state_map[s], apply_on_term(k)) for s, k in self.backedges
         )
 
     def get_error_symbol(self):
@@ -2100,6 +2104,20 @@ class ParseTable:
             if s is not None and s.is_inconsistent():
                 return True
         return False
+
+    def rewrite_state_indexes(self, state_map=None):
+        if state_map is None:
+            state_map = {
+                s.index: i
+                for i, s in enumerate(self.states)
+                if s is not None
+            }
+        for s in self.states:
+            if s is not None:
+                s.rewrite_state_indexes(state_map)
+        self.named_goals = [
+            (nt, state_map[s]) for nt, s in self.named_goals
+        ]
 
     def new_state(self, locations, delayed_actions = OrderedFrozenSet()):
         """Get or create state with an LR0 location and delayed actions. Returns a tuple
@@ -2996,9 +3014,7 @@ class ParseTable:
 
     def remove_all_unreachable_state(self, verbose, progress):
         self.states = [s for s in self.states if s is not None]
-        state_map = { s.index: i for i, s in enumerate(self.states) }
-        for s in self.states:
-            s.rewrite_state_indexes(state_map)
+        self.rewrite_state_indexes()
 
     def fold_reduce_cascade(self, verbose, progress):
         # Reduce actions, especially with lookahead tokens, have a tendency of
@@ -3141,9 +3157,7 @@ class ParseTable:
         self.states = []
         self.states.extend(shift_states)
         self.states.extend(action_states)
-        state_map = { s.index: i for i, s in enumerate(self.states) }
-        for s in self.states:
-            s.rewrite_state_indexes(state_map)
+        self.rewrite_state_indexes()
 
     def count_shift_states(self):
         return sum(1 for s in self.states if len(s.epsilon) == 0)
