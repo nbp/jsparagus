@@ -96,15 +96,8 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
         }
         *self.sim_state_stack.last_mut().unwrap() = state;
     }
-    fn state_at_depth(&self, depth: usize) -> usize {
-        if depth > self.sim_state_stack.len() {
-            let depth = depth - self.sim_state_stack.len();
-            // Note: sp is the top value, not the length. Thus we do not need a
-            // -1 here.
-            self.state_stack[self.sp - depth]
-        } else {
-            self.sim_state_stack[self.sim_state_stack.len() - 1 - depth]
-        }
+    fn top_state(&self) -> usize {
+        self.state()
     }
     fn check_not_on_new_line(&mut self, _peek: usize) -> Result<'alloc, bool> {
         Ok(true)
