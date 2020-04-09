@@ -2157,7 +2157,6 @@ class ParseTable:
 
     def remove_state(self, s, maybe_unreachable_set):
         state = self.states[s]
-        # print("Remove state {}".format(state))
         self.clear_edges(state, maybe_unreachable_set)
         del self.state_cache[state]
         self.states[s] = None
