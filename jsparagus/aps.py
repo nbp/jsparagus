@@ -1,5 +1,5 @@
 import collections
-from .actions import Action
+from .actions import Action, FilterStates
 
 # An edge in a Parse table is a tuple of a source state and the term followed
 # to exit this state. The destination is not saved here as it can easily be
@@ -150,18 +150,28 @@ class APS:
             prev_sh = self.shift[:-1] + [edge]
             # TODO: Add support for Lookahead and flag manipulation rules, as
             # both of these would invalidate potential reduce paths.
-            if a.update_stack() and a.update_stack_with() == (0, None, -1):
-                assert len(self.replay) >= 1
-                term = self.replay[0]
-                rp = self.replay[1:]
-                sh_state = self.shift[-1].src
-                sh_edge = Edge(sh_state, term)
-                sh_to = pt.states[sh_state][term]
-                sh_to = Edge(sh_to, None)
-                new_sh = self.shift[:-1] + [sh_edge, sh_to]
-                new_hs = hs + [hs_edge]
-                assert sh_to.src == a.replay_dest
-                yield APS(to, st, new_sh, la, rp, hs + [edge])
+            if a.update_stack() and a.update_stack_with()[2] < 0:
+                assert a.update_stack_with()[0] == 0
+                assert a.update_stack_with()[1] is None
+                num_replay = -a.update_stack_with()[2]
+                assert len(self.replay) >= num_replay
+                new_rp = self.replay[:]
+                new_sh = self.shift[:]
+                new_hs = hs
+                replay_steps = a.replay_steps[:]
+                while num_replay > 0:
+                    num_replay -= 1
+                    term = new_rp[0]
+                    del new_rp[0]
+                    sh_state = new_sh[-1].src
+                    sh_edge = Edge(sh_state, term)
+                    sh_to = pt.states[sh_state][term]
+                    sh_to = Edge(sh_to, None)
+                    del new_sh[-1]
+                    new_sh = new_sh + [sh_edge, sh_to]
+                    assert sh_to.src == replay_steps[0]
+                    del replay_steps[0]
+                yield APS(to, st, new_sh, la, new_rp, hs + [edge])
             elif a.update_stack():
                 reducing = not a.follow_edge()
                 pop, nt, replay = a.update_stack_with()
@@ -229,17 +239,33 @@ class APS:
                     if reducing:
                         to = new_sh[-1].src
                     yield APS(to, new_st, new_sh, new_la, new_rp, hs + [edge], reducing=reducing)
+            elif isinstance(a, FilterStates):
+                # FilterStates is added by the graph transformation and is
+                # expected to be added after the replacement of
+                # Reduce(Unwind(...)) by Unwind, FilterStates and Replay
+                # actions. Thus, at the time when FilterStates is encountered,
+                # we do not expect `self.states` to match the last element of
+                # the `shift` list to match.
+                assert not state_match_shift_end
+
+                # Emulate FilterStates condition, which is to branch to the
+                # destination if the state value from the top of the stack is
+                # in the list of states of this condition.
+                if self.shift[-1].src in a.states:
+                    yield APS(to, st, sh, la, rp, hs + [edge])
             else:
                 to = Edge(to, None)
                 yield APS(to.src, st, prev_sh + [to], la, rp, hs + [edge])
 
     def string(self, name = "aps"):
-        return """{}.stack = [{}]
+        return """{}.state = {}
+{}.stack = [{}]
 {}.shift = [{}]
 {}.lookahead = [{}]
 {}.replay = [{}]
 {}.history = [{}]
         """.format(
+            name, self.state,
             name, " ".join(edge_str(e) for e in self.stack),
             name, " ".join(edge_str(e) for e in self.shift),
             name, ", ".join(repr(e) for e in self.lookahead),
