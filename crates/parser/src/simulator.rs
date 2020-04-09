@@ -85,6 +85,11 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
     fn replay(&mut self, tv: TermValue<()>) {
         self.replay_stack.push(tv)
     }
+    fn shift_replayed(&mut self, state: usize) {
+        let tv = self.replay_stack.pop().unwrap();
+        self.sim_state_stack.push(state);
+        self.sim_node_stack.push(tv);
+    }
     fn epsilon(&mut self, state: usize) {
         if self.sim_state_stack.is_empty() {
             self.sim_state_stack.push(self.state_stack[self.sp]);

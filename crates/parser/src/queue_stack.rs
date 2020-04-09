@@ -76,6 +76,7 @@ impl<T> QueueStack<T> {
     }
 
     /// Move elements from the head of the queue to the top of the stack.
+    #[inline(always)]
     pub(crate) fn shift(&mut self) {
         debug_assert!(!self.queue_empty());
         assert!(self.can_shift());
