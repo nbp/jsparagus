@@ -116,24 +116,24 @@ class Replay(Action):
     this does not Shift a term given as argument as the replay action should
     always be garanteed and that we want to maximize the sharing of code when
     possible."""
-    __slots__ = "replay_dest",
+    __slots__ = "replay_steps",
 
-    def __init__(self, replay_dest):
+    def __init__(self, replay_steps):
         super().__init__([], [])
-        assert isinstance(replay_dest, int)
-        self.replay_dest = replay_dest
+        self.replay_steps = tuple(replay_steps)
+        assert all(isinstance(e, int) for e in self.replay_steps)
 
     def __str__(self):
-        return "Replay({})".format(str(replay_dest))
+        return "Replay({})".format(str(self.replay_steps))
 
     def update_stack(self):
         return True
 
     def update_stack_with(self):
-        return (0, None, -1)
+        return (0, None, -len(self.replay_steps))
 
     def rewrite_state_indexes(self, state_map):
-        return Replay(state_map[self.replay_dest])
+        return Replay(map(lambda s: state_map[s], self.replay_steps))
 
 class Unwind(Action):
     """Define an unwind operation which pops N elements of the stack and pushes one
