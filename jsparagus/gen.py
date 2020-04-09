@@ -41,8 +41,9 @@ from .grammar import (Grammar,
                       Optional, Exclude, Literal, UnicodeCategory, Nt, Var,
                       End, NoLineTerminatorHere, ErrorSymbol,
                       LookaheadRule, lookahead_contains, lookahead_intersect)
-from .actions import (Accept, Action, Unwind, Reduce, Lookahead, CheckNotOnNewLine,
-                      FilterFlag, PushFlag, PopFlag, FunCall, Seq, SeqBuilder)
+from .actions import (Accept, Action, Replay, Unwind, Reduce, Lookahead,
+                      CheckNotOnNewLine, FilterStates, FilterFlag, PushFlag,
+                      PopFlag, FunCall, Seq, SeqBuilder)
 from . import emit
 from .runtime import ACCEPT, ErrorToken
 from .utils import keep_until
@@ -2077,11 +2078,16 @@ class ParseTable:
         if optimize:
             # Fold sequences of unconditional reduce actions, and remove unused
             # non-terminals.
-            self.fold_reduce_cascade(verbose, progress)
+            #self.fold_reduce_cascade(verbose, progress)
+            # Replace reduce actions by programmatic stack manipulation.
+            self.remove_reduce(verbose, progress)
             # Fold paths which have the same ending.
             self.fold_identical_endings(verbose, progress)
+        # Group state is similar non-terminal edges close-by, to match
+        # statement of the Rust backend.
+        self.group_nonterminal_states(verbose, progress)
         # Split shift states from epsilon states.
-        self.group_epsilon_states(verbose, progress)
+        #self.group_epsilon_states(verbose, progress)
 
     def save(self, filename):
         with open(filename, 'wb') as f:
@@ -3180,7 +3186,127 @@ class ParseTable:
                 hit = rewrite_if_same_outedges(self.states)
         consume(visit_table(), progress)
 
+    def remove_reduce(self, verbose, progress):
+        # Remove Reduce actions and replace them by the programmatic
+        # equivalent.
+        #
+        # This transformation preserves the stack manipulations of the parse
+        # table. It only changes it from being implicitly executed by the shift
+        # function of the LR parser, by being executed as an action.
+        #
+        # This transformation converts the hard-to-predict load of the shift
+        # table into a branch prediction which is potentially easier to
+        # predict.
+        #
+        # A side-effect of this transformation is that it removes the need for
+        # replaying non-terminals, thus the backends could safely ignore the
+        # ability of the shift function from handling non-terminals.
+        if verbose or progress:
+            print("Remove Reduce actions.")
 
+        maybe_unreachable_set = set()
+        def transform():
+            for s in self.states:
+                term, _ = next(iter(s.epsilon), (None, None))
+                if self.term_is_shifted(term):
+                    continue
+                assert len(s.epsilon) == 1
+                yield # progress bar.
+                reduce_state = s
+                if verbose:
+                    print("Inlining shift-operation for state {}".format(str(reduce_state)))
+
+                # The reduced_aps should contain all reduced path of the single
+                # Reduce action which is present on this state. However, as
+                # state of the graph are shared, some reduced paths might follow
+                # the same path and reach the same state.
+                #
+                # This code collect for each replayed path, the tops of the
+                # stack on top of which these states are replayed.
+                aps = APS.start(s.index)
+                states_by_replay_term = collections.defaultdict(list)
+                for reduced_aps in aps.shift_next(self):
+                    # As long as we have elements to replay, we should only
+                    # have a single path for each reduced path. If the next
+                    # state contains an action, then we stop here.
+                    iter_aps = reduced_aps
+                    next_is_action = self.states[iter_aps.state].epsilon != []
+                    has_replay = iter_aps.replay != []
+                    assert next_is_action is False and has_replay is True
+                    while (not next_is_action) and has_replay:
+                        # print("Step {}:\n{}".format(len(iter_aps.history), iter_aps.string(name="\titer_aps")))
+                        next_aps = list(iter_aps.shift_next(self))
+                        if len(next_aps) == 0:
+                            # Note, this might happen as we are adding
+                            # lookahead tokens from any successor, we might not
+                            # always have a way to always replay all tokens, in
+                            # such case an error should be produced, but in the
+                            # mean time, let's use the shift function as usual.
+                            break
+                        assert len(next_aps) == 1
+                        iter_aps = next_aps[0]
+                        next_is_action = self.states[iter_aps.state].epsilon != []
+                        has_replay = iter_aps.replay != []
+                    # print("End at {}:\n{}".format(len(iter_aps.history), iter_aps.string(name="\titer_aps")))
+                    replay_list = list(map(lambda e: e.src, iter_aps.shift))
+                    assert len(replay_list) >= 2
+                    replay_term = Replay(replay_list[1:])
+                    states_by_replay_term[replay_term].append(replay_list[0])
+
+                # Create FilterStates actions.
+                filter_by_replay_term = {
+                    replay_term: FilterStates(states)
+                    for replay_term, states in sorted(states_by_replay_term.items())
+                }
+
+                # Convert the Reduce action to an Unwind action.
+                reduce_term, _ = next(iter(s.epsilon))
+                if isinstance(reduce_term, Reduce):
+                    unwind_term = reduce_term.unwind
+                else:
+                    assert isinstance(reduce_term, Seq)
+                    assert isinstance(reduce_term.actions[-1], Reduce)
+                    unwind_term = Seq(list(reduce_term.actions[:-1]) + [reduce_term.actions[-1].unwind])
+
+                # Remove the old Reduce edge if still present.
+                self.remove_edge(reduce_state, reduce_term, maybe_unreachable_set)
+
+                # Add Unwind action.
+                locations = OrderedFrozenSet(reduce_state.locations)
+                delayed = OrderedFrozenSet(filter_by_replay_term.items())
+                is_new, filter_state = self.new_state(locations, delayed)
+                self.add_edge(reduce_state, unwind_term, filter_state.index)
+                if not is_new:
+                    for replay_term, filter_term in filter_by_replay_term.items():
+                        assert filter_term in filter_state
+                        replay_state = self.states[filter_state[filter_term]]
+                        assert replay_term in replay_state
+                    continue
+
+                for replay_term, filter_term in filter_by_replay_term.items():
+                    dest = replay_term.replay_steps[-1]
+                    dest = self.states[dest]
+
+                    # Add FilterStates action from the filter_state to the replay_state.
+                    locations = OrderedFrozenSet(dest.locations)
+                    delayed = OrderedFrozenSet(itertools.chain(dest.delayed_actions, [replay_term]))
+                    is_new, replay_state = self.new_state(locations, delayed)
+                    self.add_edge(filter_state, filter_term, replay_state.index)
+                    assert (not is_new) == (replay_term in replay_state)
+
+                    # Add Replay actions from the replay_state to the destination.
+                    if is_new:
+                        dest = replay_term.replay_steps[-1]
+                        self.add_edge(replay_state, replay_term, dest)
+                    #print(replay_state)
+                    assert not replay_state.is_inconsistent()
+
+                #print(filter_state)
+                #print(reduce_state)
+                assert not reduce_state.is_inconsistent()
+                assert not filter_state.is_inconsistent()
+
+        consume(transform(), progress)
 
     def group_epsilon_states(self, verbose, progress):
         shift_states = [s for s in self.states if len(s.epsilon) == 0]
@@ -3188,6 +3314,27 @@ class ParseTable:
         self.states = []
         self.states.extend(shift_states)
         self.states.extend(action_states)
+        self.rewrite_state_indexes()
+
+    def group_nonterminal_states(self, verbose, progress):
+        # This function is used to reduce the range of FilterStates values,
+        # such that the Rust compiler can compile FilterStates match statements
+        # to a table-switch.
+        freq_nt = collections.Counter(nt for s in self.states for nt in s.nonterminals)
+        freq_nt, _ = zip(*freq_nt.most_common())
+        def state_value(s):
+            value = 0.0
+            i = 1.0
+            if len(s.epsilon) != 0:
+                return 2.0
+            if len(s.nonterminals) == 0:
+                return 1.0
+            for nt in freq_nt:
+                if nt in s:
+                    value += i
+                i /= 2.0
+            return -value
+        self.states.sort(key=state_value)
         self.rewrite_state_indexes()
 
     def count_shift_states(self):
