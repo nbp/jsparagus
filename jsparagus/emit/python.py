@@ -1,8 +1,8 @@
 """Emit code and parser tables in Python."""
 
 from ..grammar import Some, Nt, ErrorSymbol
-from ..actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag, PushFlag,
-                       PopFlag, FunCall, Seq)
+from ..actions import (Accept, Action, Replay, Unwind, Reduce, Lookahead, CheckNotOnNewLine,
+                       FilterStates, FilterFlag, PushFlag, PopFlag, FunCall, Seq)
 from ..runtime import ErrorToken
 from ..ordered import OrderedSet
 
@@ -35,7 +35,11 @@ def write_python_parse_table(out, parse_table):
     def write_action(act, indent=""):
         assert isinstance(act, Action)
         assert not act.is_inconsistent()
-        if isinstance(act, Reduce):
+        if isinstance(act, Replay):
+            for s in act.replay_steps:
+                out.write("{}parser.replay_action({})\n".format(indent, s))
+            return indent, True
+        if isinstance(act, (Unwind, Reduce)):
             pop, nt, replay = act.update_stack_with()
             out.write("{}replay = [StateTermValue(0, {}, value, False)]\n".format(indent, repr(nt)))
             if replay > 0:
@@ -43,7 +47,7 @@ def write_python_parse_table(out, parse_table):
             if replay + pop > 0:
                 out.write("{}del parser.stack[-{}:]\n".format(indent, replay + pop))
             out.write("{}parser.shift_list(replay, lexer)\n".format(indent))
-            return indent, False
+            return indent, act.follow_edge()
         if isinstance(act, Accept):
             out.write("{}raise ShiftAccept()\n".format(indent))
             return indent, False

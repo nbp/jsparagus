@@ -12,8 +12,9 @@ from ..ordered import OrderedSet
 
 from ..grammar import (CallMethod, Some, is_concrete_element, Nt, InitNt, Optional, End,
                        ErrorSymbol)
-from ..actions import (Accept, Action, Reduce, Lookahead, CheckNotOnNewLine, FilterFlag,
-                       PushFlag, PopFlag, FunCall, Seq)
+from ..actions import (Accept, Action, Replay, Unwind, Reduce, Lookahead,
+                       CheckNotOnNewLine, FilterStates, FilterFlag, PushFlag,
+                       PopFlag, FunCall, Seq)
 
 from .. import types
 
@@ -109,7 +110,7 @@ class RustActionWriter:
     def collect_uses(self, act):
         "Generator which visit all used variables."
         assert isinstance(act, Action)
-        if isinstance(act, Reduce):
+        if isinstance(act, (Reduce, Unwind)):
             yield "value"
         elif isinstance(act, FunCall):
             def map_with_offset(args):
@@ -135,11 +136,11 @@ class RustActionWriter:
 
     def write_state_transitions(self, state):
         "Given a state, generate the code corresponding to all outgoing epsilon edges."
-        assert not state.is_inconsistent()
-        assert len(list(state.shifted_edges())) == 0
-        for ctx in self.writer.parse_table.debug_context(state.index, None):
-            self.write("// {}", ctx)
         try:
+            assert not state.is_inconsistent()
+            assert len(list(state.shifted_edges())) == 0
+            for ctx in self.writer.parse_table.debug_context(state.index, None):
+                self.write("// {}", ctx)
             first, dest = next(state.edges(), (None, None))
             if first is None:
                 return
@@ -245,7 +246,9 @@ class RustActionWriter:
 
     def write_single_action(self, act, is_packed):
         self.write("// {}", str(act))
-        if isinstance(act, Reduce):
+        if isinstance(act, Replay):
+            self.write_replay(act)
+        elif isinstance(act, (Reduce, Unwind)):
             self.write_reduce(act, is_packed)
         elif isinstance(act, Accept):
             self.write_accept()
@@ -257,6 +260,10 @@ class RustActionWriter:
             self.write_funcall(act, is_packed)
         else:
             raise ValueError("Unexpected action type")
+
+    def write_replay(self, act):
+        for shift_state in act.replay_steps:
+            self.write("parser.shift_replayed({});", shift_state)
 
     def write_reduce(self, act, is_packed):
         value = "value"
@@ -277,12 +284,14 @@ class RustActionWriter:
             value = "value"
 
         _, nt, _ = act.update_stack_with()
+        assert nt is not None
         self.write("let term = Term::Nonterminal(NonterminalId::{});",
                    self.writer.nonterminal_to_camel(nt))
         if value != "value":
             self.write("let value = {};", value)
         self.write("parser.replay(TermValue { term, value });")
-        self.write("return Ok(false)")
+        if not act.follow_edge():
+            self.write("return Ok(false)")
 
     def write_accept(self):
         self.write("return Ok(true);")
@@ -666,6 +675,7 @@ class RustParserWriter:
         self.write(1, "}")
         self.write(1, "fn pop(&mut self) -> TermValue<Value>;")
         self.write(1, "fn replay(&mut self, tv: TermValue<Value>);")
+        self.write(1, "fn shift_replayed(&mut self, state: usize);")
         self.write(1, "fn epsilon(&mut self, state: usize);")
         self.write(1, "fn top_state(&self) -> usize;")
         self.write(1, "fn check_not_on_new_line(&mut self, peek: usize) -> Result<'alloc, bool>;")
