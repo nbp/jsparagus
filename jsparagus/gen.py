@@ -2347,10 +2347,13 @@ class ParseTable:
         state = right_of[0].src
         assert isinstance(state, int)
         for edge in self.states[state].backedges:
-            if not self.term_is_shifted(edge.term):
-                print(repr(edge))
-                print(self.states[edge.src])
             assert self.term_is_shifted(edge.term)
+            if isinstance(edge.term, Action) and edge.term.update_stack():
+                # Some Action such as Unwind and Replay are actions which are
+                # forking the execution state from the parse stable state.
+                # While computing the shifted_path_to, we only iterate over the
+                # parse table states.
+                continue
             if self.term_is_stacked(edge.term):
                 s_n = n - 1
                 if n == 0:
@@ -2369,6 +2372,7 @@ class ParseTable:
         action = shifted[-1].term
         assert action.update_stack()
         pop, nt, replay = action.update_stack_with()
+        assert nt is not None
         depth = pop + replay
         if depth > 0:
             # We are reducing at least one element from the stack.
