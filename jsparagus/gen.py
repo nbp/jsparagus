@@ -32,6 +32,7 @@ import collections
 import io
 import pickle
 import sys
+import itertools
 import typing
 from dataclasses import dataclass
 
