@@ -1747,7 +1747,7 @@ class StateAndTransitions:
             (k.rewrite_state_indexes(state_map), state_map[s])
             for k, s in self.epsilon
         ]))
-        self.backedges = set(
+        self.backedges = OrderedSet(
             Edge(state_map[e.src], apply_on_term(e.term)) for e in self.backedges
         )
 
@@ -3187,7 +3187,7 @@ class ParseTable:
                 # Create FilterStates actions.
                 filter_by_replay_term = {
                     replay_term: FilterStates(states)
-                    for replay_term, states in sorted(states_by_replay_term.items())
+                    for replay_term, states in states_by_replay_term.items()
                 }
 
                 # Convert the Reduce action to an Unwind action.
