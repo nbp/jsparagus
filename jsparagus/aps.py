@@ -188,10 +188,10 @@ class APS:
                     # in the state `to`.
 
                     # print("Compare shifted path, with reduced path:\n\tshifted = {}\n\treduced = {}, \n\taction = {},\n\tnew_path = {}\n".format(
-                    #     " ".join(edge_str(e) for e in prev_sh),
-                    #     " ".join(edge_str(e) for e in path),
+                    #     " ".join(str(e) for e in prev_sh),
+                    #     " ".join(str(e) for e in path),
                     #     str(a),
-                    #     " ".join(edge_str(e) for e in reduced_path),
+                    #     " ".join(str(e) for e in reduced_path),
                     # ))
                     if prev_sh[-len(path):] != path[-len(prev_sh):]:
                         # If the reduced production does not match the shifted

@@ -51,7 +51,7 @@ from . import emit
 from .runtime import ACCEPT, ErrorToken
 from .utils import keep_until
 from . import types
-from .aps import Edge, APS, edge_str
+from .aps import Edge, APS
 
 
 # *** Operations on grammars **************************************************
@@ -2437,15 +2437,15 @@ class ParseTable:
             for path in error_paths:
                 if stacked_path(path) not in stack_success_paths:
                     for p in success_paths:
-                        print("Success path: {}".format(" ".join(map(edge_str, p))))
+                        print("Success path: {}".format(" ".join(map(str, p))))
                     head = self.states[path[0].src]
                     print("\n".join([
                         "Reduce path does not start with a state capable of shifting the non-terminal {}.",
                         "The Reduce path is: {}",
                         "The starting state is {}",
                         "{} backedges are: {}"
-                    ]).format(nt, " ".join(map(edge_str, path)), head,
-                              len(head.backedges), ", ".join(map(edge_str, head.backedges))))
+                    ]).format(nt, " ".join(map(str, path)), head,
+                              len(head.backedges), ", ".join(map(str, head.backedges))))
                     assert nt in head.nonterminals
 
     def aps_visitor(self, aps, visit):
