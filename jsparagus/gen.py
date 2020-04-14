@@ -3085,7 +3085,7 @@ class ParseTable:
             hit = False
             for edge in replace_edges:
                 src = self.states[edge.src]
-                old_dest = src[term]
+                old_dest = src[edge.term]
                 # print("replace {} -- {} --> {}, by {} -- {} --> {}"
                 #       .format(src.index, term, src[term], src.index, term, ref.index))
                 self.replace_edge(src, edge.term, ref.index, maybe_unreachable)
