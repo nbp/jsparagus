@@ -3235,9 +3235,11 @@ class ParseTable:
             value = 0.0
             i = 1.0
             if len(s.epsilon) != 0:
-                return 2.0
+                if all(isinstance(e.term, Action) for e in s.backedges):
+                    return 8.0
+                return 4.0
             if len(s.nonterminals) == 0:
-                return 1.0
+                return 2.0
             for nt in freq_nt:
                 if nt in s:
                     value += i
