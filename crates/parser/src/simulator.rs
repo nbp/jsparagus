@@ -7,8 +7,8 @@
 use crate::parser::Parser;
 use ast::SourceLocation;
 use generated_parser::{
-    noop_actions, ParseError, ParserTrait, Result, StackValue, Term, TermValue, TerminalId, Token,
-    TABLES,
+    noop_actions, ParseError, ParserTrait, Result, StackPopN, StackValue, Term, TermValue,
+    TerminalId, Token, TABLES,
 };
 
 /// The Simulator is used to check whether we can shift one token, either to
@@ -29,6 +29,18 @@ pub struct Simulator<'alloc, 'parser> {
     sim_node_stack: Vec<TermValue<()>>,
     /// Mutable term stack used by the simulator for replaying terms when reducing non-terminals are replaying lookahead terminals.
     replay_stack: Vec<TermValue<()>>,
+}
+
+impl<'a, 'alloc, 'parser> StackPopN<TermValue<()>> for &'a mut Simulator<'alloc, 'parser> {
+    fn pop(&mut self) -> TermValue<()> {
+        if let Some(s) = self.sim_node_stack.pop() {
+            self.sim_state_stack.pop();
+            return s;
+        }
+        let t = self.node_stack[self.sp - 1].term;
+        self.sp -= 1;
+        TermValue { term: t, value: () }
+    }
 }
 
 impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
@@ -69,11 +81,13 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
         }
         Ok(false)
     }
+    #[inline(always)]
+    fn check_before_unwind(&self, _n: usize) {}
     fn unshift(&mut self) {
-        let tv = self.pop();
+        let tv = self.pop_1();
         self.replay(tv)
     }
-    fn pop(&mut self) -> TermValue<()> {
+    fn pop_1(&mut self) -> TermValue<()> {
         if let Some(s) = self.sim_node_stack.pop() {
             self.sim_state_stack.pop();
             return s;
@@ -81,6 +95,9 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
         let t = self.node_stack[self.sp - 1].term;
         self.sp -= 1;
         TermValue { term: t, value: () }
+    }
+    fn pop_n<'a>(&'a mut self, _n: usize) -> Box<dyn StackPopN<TermValue<()>> + 'a> {
+        Box::new(self)
     }
     fn replay(&mut self, tv: TermValue<()>) {
         self.replay_stack.push(tv)

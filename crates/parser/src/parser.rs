@@ -3,7 +3,7 @@ use crate::simulator::Simulator;
 use ast::SourceLocation;
 use generated_parser::{
     full_actions, AstBuilder, AstBuilderDelegate, ErrorCode, ParseError, ParserTrait, Result,
-    StackValue, Term, TermValue, TerminalId, Token, TABLES,
+    StackPopN, StackValue, Term, TermValue, TerminalId, Token, TABLES,
 };
 use json_log::json_trace;
 
@@ -67,17 +67,34 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
         }
         Ok(false)
     }
+    #[inline(always)]
+    fn check_before_unwind(&self, n: usize) {
+        assert!(self.state_stack.len() > n);
+        assert!(self.node_stack.stack_len() >= n);
+        assert!(n == 0 || self.node_stack.can_unshift());
+    }
+    #[inline(always)]
     fn unshift(&mut self) {
         self.state_stack.pop().unwrap();
         self.node_stack.unshift()
     }
-    fn pop(&mut self) -> TermValue<StackValue<'alloc>> {
+    #[inline(always)]
+    fn pop_1(&mut self) -> TermValue<StackValue<'alloc>> {
         self.state_stack.pop().unwrap();
         self.node_stack.pop().unwrap()
     }
+    #[inline(always)]
+    fn pop_n<'a>(&'a mut self, n: usize) -> Box<dyn StackPopN<TermValue<StackValue<'alloc>>> + 'a> {
+        for _ in 0..n {
+            self.state_stack.pop();
+        }
+        Box::new(self.node_stack.pop_n(n))
+    }
+    #[inline(always)]
     fn replay(&mut self, tv: TermValue<StackValue<'alloc>>) {
         self.node_stack.push_next(tv)
     }
+    #[inline(always)]
     fn epsilon(&mut self, state: usize) {
         *self.state_stack.last_mut().unwrap() = state;
     }
@@ -89,9 +106,21 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
         // let index = from_state * TABLES.shift_width + term_index;
         // let goto = TABLES.shift_table[index];
         // assert!((goto as usize) == state);
-        self.state_stack.push(state);
+        let len = self.state_stack.len();
+        if len >= self.state_stack.capacity() {
+            self.state_stack.reserve(1);
+        }
+        // LLVM failed to inline self.state_stack.push(state)
+        // Thus we reimplement it here.
+        unsafe {
+            // Write over the gap without reading nor dropping the old entry.
+            let ptr = self.state_stack.as_mut_ptr().add(len);
+            ptr.write(state);
+            self.state_stack.set_len(len + 1);
+        }
         self.node_stack.shift();
     }
+    #[inline(always)]
     fn top_state(&self) -> usize {
         self.state()
     }
@@ -105,7 +134,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
                 return Ok(true);
             }
             self.rewind(peek - 1);
-            let tv = self.pop();
+            let tv = self.pop_1();
             self.try_error_handling(tv)?;
             return Ok(false);
         }

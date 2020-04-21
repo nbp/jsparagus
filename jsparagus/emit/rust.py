@@ -221,15 +221,28 @@ class RustActionWriter:
             pop, nts, replay = act.update_stack_with()
             start = 0
             depth = pop
+            if replay + pop > 0:
+                self.write("parser.check_before_unwind({});", replay + pop)
             if replay > 0:
                 self.write("parser.rewind({});", replay)
                 start = replay
                 depth += start
+            names = []
+            used_names = []
             for i in range(start, depth):
-                name = 's'
+                name = 's{}'.format(i + 1)
+                used_names.append(name)
                 if i + 1 not in self.used_variables:
-                    name = '_s'
-                self.write("let {}{} = parser.pop();", name, i + 1)
+                    name = '_' + name
+                names.append(name)
+            if pop > 0:
+                self.write("let ({}) = {{", ', '.join(names))
+                with indent(self):
+                    self.write("let mut prod_stack = parser.pop_n({});", pop)
+                    for name in used_names:
+                        self.write("let {} = prod_stack.pop();", name)
+                    self.write("({})", ', '.join(used_names))
+                self.write("};")
 
         if isinstance(act, Seq):
             for a in act.actions:
@@ -395,7 +408,7 @@ class RustParserWriter:
         self.shift()
         self.error_codes()
         self.check_camel_case()
-        self.parser_trait()
+        # self.parser_trait()
         self.actions()
         self.entry()
 
@@ -411,6 +424,7 @@ class RustParserWriter:
         self.write(0, "")
         self.write(0, "use crate::ast_builder::AstBuilderDelegate;")
         self.write(0, "use crate::stack_value_generated::{StackValue, TryIntoStack};")
+        self.write(0, "use crate::traits::{TermValue, ParserTrait};")
         self.write(0, "use crate::error::Result;")
         traits = OrderedSet()
         for mode_traits in self.parse_table.exec_modes.values():

@@ -2,6 +2,7 @@
 //! with variable lookahead, as it would allow to pop elements which are below
 //! the top-element, and maintain a top counter which would be in charge of
 //! moving these elements once shifted.
+use generated_parser::StackPopN;
 use std::ptr;
 
 /// This container implements a stack and a queue in a single vector:
@@ -83,27 +84,44 @@ impl<T> QueueStack<T> {
     }
 
     /// Add an element to the back of the queue.
+    #[inline(always)]
     pub fn enqueue(&mut self, value: T) {
         self.buf.push(value);
     }
 
     /// Add an element to the front of the queue.
+    #[inline(always)]
     pub fn push_next(&mut self, value: T) {
         self.compact_with_gap(1);
-        self.gap -= 1;
         unsafe {
             // Write over the gap without reading nor dropping the old entry.
-            let ptr = self.buf.as_mut_ptr().add(self.top + self.gap);
+            let ptr = self.buf.as_mut_ptr().add(self.top + self.gap - 1);
             ptr.write(value);
         }
+        // NOTE: gap is updated last to optimize reduce actions which are
+        // reducing a single term, and copying its value without modification,
+        // as follow:
+        //
+        //     let value = s1;
+        //     let term = Term::Nonterminal(NonterminalId::ExpressionIn);
+        //     let value = value.value;
+        //     parser.replay(TermValue { term, value });
+        //
+        // By updating the gap last, we avoid the aliasing of `self.gap` with
+        // the content of `self.buf`. Thus LLVM is able to remove the last read
+        // and the write of the same value back to memory. Only the term is
+        // overwritten, not the value.
+        self.gap -= 1;
     }
 
     /// Whether elements can be shifted.
+    #[inline(always)]
     pub fn can_shift(&self) -> bool {
         self.gap == 0 && !self.queue_empty()
     }
 
     /// Whether elements can be unshifted.
+    #[inline(always)]
     pub fn can_unshift(&self) -> bool {
         self.gap == 0 && !self.stack_empty()
     }
@@ -116,6 +134,7 @@ impl<T> QueueStack<T> {
     ///
     /// # Panics
     /// If the stack is empty or there is a gap.
+    #[inline(always)]
     pub fn unshift(&mut self) {
         assert!(self.can_unshift());
         self.top -= 1;
@@ -139,6 +158,7 @@ impl<T> QueueStack<T> {
     /// is empty.
     ///
     /// This increases the gap size by 1.
+    #[inline(always)]
     pub fn pop(&mut self) -> Option<T> {
         if self.top == 0 {
             None
@@ -150,6 +170,27 @@ impl<T> QueueStack<T> {
                 let ptr = self.buf.as_mut_ptr().add(self.top);
                 Some(ptr.read())
             }
+        }
+    }
+
+    /// Remove the top N elements and creates a temporary QueueStackPopN which
+    /// would be used to pop the N elements while taking ownership of the
+    /// values.
+    ///
+    /// This increases the gap size by N, and reduces the stack top by N.
+    ///
+    /// # Panics
+    /// If the stack contains less than N elements.
+    #[inline(always)]
+    pub fn pop_n(&mut self, n: usize) -> QueueStackPopN<T> {
+        assert!(self.top >= n);
+        assert_eq!(self.gap, 0);
+        self.top -= n;
+        self.gap += n;
+        let start_gap = self.gap;
+        QueueStackPopN {
+            qs: self,
+            gap: start_gap,
         }
     }
 
@@ -186,6 +227,7 @@ impl<T> QueueStack<T> {
     }
 
     /// Returns a reference to the front element of the queue.
+    #[inline(always)]
     pub fn next(&self) -> Option<&T> {
         if self.queue_empty() {
             None
@@ -252,5 +294,32 @@ impl<T> Drop for QueueStack<T> {
         // the vector, we move all initialized values from the queue into the
         // remaining gap.
         self.compact_with_gap(0);
+    }
+}
+
+/// This is an internal structure made to pop N elements from a QueueStack.
+pub struct QueueStackPopN<'a, T> {
+    qs: &'a mut QueueStack<T>,
+    gap: usize,
+}
+
+impl<'a, T> StackPopN<T> for QueueStackPopN<'a, T> {
+    #[inline(always)]
+    fn pop(&mut self) -> T {
+        assert!(self.gap > 0);
+        self.gap -= 1;
+        unsafe {
+            // Take ownership of the content.
+            let ptr = self.qs.buf.as_mut_ptr().add(self.qs.top + self.gap);
+            ptr.read()
+        }
+    }
+}
+
+impl<'a, T> Drop for QueueStackPopN<'a, T> {
+    fn drop(&mut self) {
+        // Assert that all elements were popped from the QueueStack, and are now
+        // owned by the caller.
+        assert_eq!(self.gap, 0);
     }
 }
