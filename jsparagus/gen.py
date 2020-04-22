@@ -3254,6 +3254,11 @@ class ParseTable:
     def count_action_states(self):
         return sum(1 for s in self.states if len(s.epsilon) > 0)
 
+    def count_action_from_shift_states(self):
+        return sum(1 for s in self.states \
+                   if len(s.epsilon) > 0 and \
+                   not all(isinstance(e.term, Action) for e in s.backedges))
+
     def prepare_debug_context(self):
         """To better filter out the traversal of the grammar in debug context, we
         pre-compute for each state the maximal depth of each state within a
