@@ -271,7 +271,7 @@ class RustActionWriter:
             if pop > 0:
                 self.write("let ({}) = {{", ', '.join(names))
                 with indent(self):
-                    self.write("let mut prod_stack = parser.pop_n({});", pop)
+                    self.write("let mut prod_stack = unsafe {{ parser.pop_n({}) }};", pop)
                     for name in used_names:
                         self.write("let {} = prod_stack.pop();", name)
                     self.write("({})", ', '.join(used_names))

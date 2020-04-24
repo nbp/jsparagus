@@ -72,8 +72,8 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
     #[inline(always)]
     fn check_before_unwind(&self, n: usize) {
         assert!(self.state_stack.len() > n);
-        assert!(self.node_stack.stack_len() >= n);
-        assert!(n == 0 || self.node_stack.can_unshift());
+        // assert!(self.node_stack.stack_len() >= n);
+        // assert!(n == 0 || self.node_stack.can_unshift());
     }
     #[inline(always)]
     fn unshift(&mut self) {
@@ -86,7 +86,10 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
         self.node_stack.pop().unwrap()
     }
     #[inline(always)]
-    fn pop_n<'a>(&'a mut self, n: usize) -> Box<dyn StackPopN<TermValue<StackValue<'alloc>>> + 'a> {
+    unsafe fn pop_n<'a>(
+        &'a mut self,
+        n: usize,
+    ) -> Box<dyn StackPopN<TermValue<StackValue<'alloc>>> + 'a> {
         for _ in 0..n {
             self.state_stack.pop();
         }

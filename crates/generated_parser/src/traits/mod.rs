@@ -28,7 +28,7 @@ pub trait ParserTrait<'alloc, Value> {
         }
     }
     fn pop_1(&mut self) -> TermValue<Value>;
-    fn pop_n<'a>(&'a mut self, n: usize) -> Box<dyn StackPopN<TermValue<Value>> + 'a>;
+    unsafe fn pop_n<'a>(&'a mut self, n: usize) -> Box<dyn StackPopN<TermValue<Value>> + 'a>;
     fn replay(&mut self, tv: TermValue<Value>);
     fn shift_replayed(&mut self, state: usize);
     fn epsilon(&mut self, state: usize);

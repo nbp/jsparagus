@@ -96,7 +96,7 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
         self.sp -= 1;
         TermValue { term: t, value: () }
     }
-    fn pop_n<'a>(&'a mut self, _n: usize) -> Box<dyn StackPopN<TermValue<()>> + 'a> {
+    unsafe fn pop_n<'a>(&'a mut self, _n: usize) -> Box<dyn StackPopN<TermValue<()>> + 'a> {
         Box::new(self)
     }
     fn replay(&mut self, tv: TermValue<()>) {

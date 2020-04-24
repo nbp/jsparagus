@@ -182,11 +182,11 @@ impl<T> QueueStack<T> {
     /// # Panics
     /// If the stack contains less than N elements.
     #[inline(always)]
-    pub fn pop_n(&mut self, n: usize) -> QueueStackPopN<T> {
-        assert!(self.top >= n);
-        assert_eq!(self.gap, 0);
+    pub unsafe fn pop_n(&mut self, n: usize) -> QueueStackPopN<T> {
+        debug_assert!(self.top >= n);
+        debug_assert_eq!(self.gap, 0);
         self.top -= n;
-        self.gap += n;
+        self.gap = n;
         let start_gap = self.gap;
         QueueStackPopN {
             qs: self,
