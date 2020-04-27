@@ -62,6 +62,12 @@ class Action:
         is no pop-ed elements. """
         raise TypeError("Action::update_stack_with not implemented")
 
+    def unshift_action(self, num):
+        """When manipulating stack operation, we have the option to unshift some
+        replayed token which were shifted to disambiguate the grammar. However,
+        they might no longer be needed in some cases."""
+        return self
+
     def shifted_action(self, shifted_term):
         "Returns the same action shifted by a given amount."
         return self
@@ -163,6 +169,10 @@ class Unwind(Action):
     def shifted_action(self, shifted_term):
         return Unwind(self.nt, self.pop, replay = self.replay + 1)
 
+    def unshift_action(self, num):
+        assert self.replay >= num
+        return Unwind(self.nt, self.pop, replay = self.replay - num)
+
 class Reduce(Action):
     """Prevent the fall-through to the epsilon transition and returns to the shift
     table execution to resume shifting or replaying terms."""
@@ -190,6 +200,10 @@ class Reduce(Action):
 
     def shifted_action(self, shifted_term):
         unwind = self.unwind.shifted_action(shifted_term)
+        return Reduce(unwind)
+
+    def unshift_action(self, num):
+        unwind = self.unwind.unshifted_action(num)
         return Reduce(unwind)
 
 class Accept(Action):
@@ -250,6 +264,8 @@ class Lookahead(Action):
             return self.accept
         return not self.accept
 
+    def unshift_action(self, num):
+        assert False
 
 class CheckNotOnNewLine(Action):
     """Check whether the terminal at the given stack offset is on a new line or
@@ -286,6 +302,9 @@ class CheckNotOnNewLine(Action):
             return True
         return CheckNotOnNewLine(self.offset - 1)
 
+    def unshift_action(self, num):
+        assert False
+
     def __str__(self):
         return "CheckNotOnNewLine({})".format(self.offset)
 
@@ -318,6 +337,9 @@ class FilterStates(Action):
         the new indexes"""
         states = list(state_map[s] for s in self.states)
         return FilterStates(states)
+
+    def unshift_action(self, num):
+        assert False
 
     def __str__(self):
         return "FilterStates({})".format(self.states)
@@ -440,6 +462,16 @@ class FunCall(Action):
                        alias_read=self.read,
                        alias_write=self.write)
 
+    def unshift_action(self, num):
+        assert self.offset >= num
+        return FunCall(self.method, self.args,
+                       trait=self.trait,
+                       fallible=self.fallible,
+                       set_to=self.set_to,
+                       offset=self.offset - num,
+                       alias_read=self.read,
+                       alias_write=self.write)
+
 
 class Seq(Action):
     """Aggregate multiple actions in one statement. Note, that the aggregated
@@ -478,6 +510,10 @@ class Seq(Action):
 
     def shifted_action(self, shift):
         actions = list(map(lambda a: a.shifted_action(shift), self.actions))
+        return Seq(actions)
+
+    def unshift_action(self, num):
+        actions = list(map(lambda a: a.unshift_action(num), self.actions))
         return Seq(actions)
 
     def rewrite_state_indexes(self, state_map):
