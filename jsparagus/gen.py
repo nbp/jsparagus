@@ -3186,29 +3186,40 @@ class ParseTable:
                 is_new, filter_state = self.new_state(locations, delayed)
                 self.add_edge(reduce_state, unwind_term, filter_state.index)
                 if not is_new:
-                    for replay_term, filter_term in filter_by_replay_term.items():
-                        assert filter_term in filter_state
-                        replay_state = self.states[filter_state[filter_term]]
-                        assert replay_term in replay_state
+                    if len(filter_by_replay_term) == 1:
+                        replay_term = next(iter(filter_by_replay_term))
+                        assert replay_term in filter_state
+                    else:
+                        for replay_term, filter_term in filter_by_replay_term.items():
+                            assert filter_term in filter_state
+                            replay_state = self.states[filter_state[filter_term]]
+                            assert replay_term in replay_state
                     continue
 
-                for replay_term, filter_term in filter_by_replay_term.items():
+                if len(filter_by_replay_term) == 1:
+                    replay_term = next(iter(filter_by_replay_term))
                     dest = replay_term.replay_steps[-1]
-                    dest = self.states[dest]
 
-                    # Add FilterStates action from the filter_state to the replay_state.
-                    locations = OrderedFrozenSet(dest.locations)
-                    delayed = OrderedFrozenSet(itertools.chain(dest.delayed_actions, [replay_term]))
-                    is_new, replay_state = self.new_state(locations, delayed)
-                    self.add_edge(filter_state, filter_term, replay_state.index)
-                    assert (not is_new) == (replay_term in replay_state)
-
-                    # Add Replay actions from the replay_state to the destination.
-                    if is_new:
+                    # Do not add the FilterStates action, as there is only one.
+                    # Add Replay actions from the filter_state to the destination.
+                    self.add_edge(filter_state, replay_term, dest)
+                else:
+                    for replay_term, filter_term in filter_by_replay_term.items():
                         dest = replay_term.replay_steps[-1]
-                        self.add_edge(replay_state, replay_term, dest)
-                    #print(replay_state)
-                    assert not replay_state.is_inconsistent()
+                        dest = self.states[dest]
+
+                        # Add FilterStates action from the filter_state to the replay_state.
+                        locations = OrderedFrozenSet(dest.locations)
+                        delayed = OrderedFrozenSet(itertools.chain(dest.delayed_actions, [replay_term]))
+                        is_new, replay_state = self.new_state(locations, delayed)
+                        self.add_edge(filter_state, filter_term, replay_state.index)
+                        assert (not is_new) == (replay_term in replay_state)
+
+                        # Add Replay actions from the replay_state to the destination.
+                        if is_new:
+                            self.add_edge(replay_state, replay_term, dest.index)
+                        #print(replay_state)
+                        assert not replay_state.is_inconsistent()
 
                 #print(filter_state)
                 #print(reduce_state)
