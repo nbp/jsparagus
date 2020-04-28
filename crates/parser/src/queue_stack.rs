@@ -184,14 +184,9 @@ impl<T> QueueStack<T> {
     #[inline(always)]
     pub unsafe fn pop_n(&mut self, n: usize) -> QueueStackPopN<T> {
         debug_assert!(self.top >= n);
-        debug_assert_eq!(self.gap, 0);
         self.top -= n;
-        self.gap = n;
-        let start_gap = self.gap;
-        QueueStackPopN {
-            qs: self,
-            gap: start_gap,
-        }
+        self.gap += n;
+        QueueStackPopN { qs: self, gap: n }
     }
 
     /// Set the gap size to `new_gap`, memmove-ing the contents of the queue as
