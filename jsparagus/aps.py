@@ -2,7 +2,7 @@ import collections
 import typing
 from dataclasses import dataclass
 from .grammar import Nt
-from .actions import Action, FilterStates
+from .actions import Action, FilterStates, Replay
 
 @dataclass(frozen=True)
 class Edge:
@@ -152,9 +152,10 @@ class APS:
             prev_sh = self.shift[:-1] + [edge]
             # TODO: Add support for Lookahead and flag manipulation rules, as
             # both of these would invalidate potential reduce paths.
-            if a.update_stack() and a.update_stack_with()[2] < 0:
+            if isinstance(a, Replay):
                 assert a.update_stack_with()[0] == 0
                 assert a.update_stack_with()[1] is None
+                assert a.update_stack_with()[2] < 0
                 num_replay = -a.update_stack_with()[2]
                 assert len(self.replay) >= num_replay
                 new_rp = self.replay[:]
@@ -220,14 +221,16 @@ class APS:
                     assert pt.is_valid_path(new_sh)
 
                     # When reducing, we replay terms which got previously
-                    # pushed on the stack as our lookahead. These terms are
-                    # computed here such that we can traverse the graph from
-                    # `to` state, using the replayed terms.
-                    new_rp = [nt]
+                    # shifted, and shrink our lookahead accordingly. A negative
+                    # number of replayed term implies that items to be replayed
+                    # are consumed as-if they were shifted and popped.
                     if replay > 0:
                         stacked_terms = [ edge.term for edge in path if pt.term_is_stacked(edge.term) ]
-                        new_rp = new_rp + stacked_terms[-replay:]
-                    new_rp = new_rp + rp
+                        new_rp = [nt] + stacked_terms[-replay:] + rp
+                    elif replay == 0:
+                        new_rp = [nt] + rp
+                    elif replay < 0:
+                        new_rp = [nt] + rp[-replay:]
                     new_la = la[:max(len(la) - replay, 0)]
 
                     # If we are reducing, this implies that we are not

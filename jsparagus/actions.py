@@ -170,7 +170,6 @@ class Unwind(Action):
         return Unwind(self.nt, self.pop, replay = self.replay + 1)
 
     def unshift_action(self, num):
-        assert self.replay >= num
         return Unwind(self.nt, self.pop, replay = self.replay - num)
 
 class Reduce(Action):
@@ -463,7 +462,6 @@ class FunCall(Action):
                        alias_write=self.write)
 
     def unshift_action(self, num):
-        assert self.offset >= num
         return FunCall(self.method, self.args,
                        trait=self.trait,
                        fallible=self.fallible,

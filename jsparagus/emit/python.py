@@ -47,12 +47,14 @@ def write_python_parse_table(out, parse_table):
             return indent, True
         if isinstance(act, (Unwind, Reduce)):
             pop, nt, replay = act.update_stack_with()
-            out.write("{}replay = [StateTermValue(0, {}, value, False)]\n".format(indent, repr(nt)))
-            if replay > 0:
-                out.write("{}replay = replay + parser.stack[-{}:]\n".format(indent, replay))
-            if replay + pop > 0:
-                out.write("{}del parser.stack[-{}:]\n".format(indent, replay + pop))
-            out.write("{}parser.shift_list(replay, lexer)\n".format(indent))
+            out.write("{}replay = []\n".format(indent))
+            while replay > 0:
+                replay -= 1
+                out.write("{}replay.append(parser.stack.pop())\n".format(indent))
+            out.write("{}replay.append(StateTermValue(0, {}, value, False))\n".format(indent, repr(nt)))
+            if pop > 0:
+                out.write("{}del parser.stack[-{}:]\n".format(indent, pop))
+            out.write("{}parser.replay.extend(replay)\n".format(indent))
             return indent, act.follow_edge()
         if isinstance(act, Accept):
             out.write("{}raise ShiftAccept()\n".format(indent))
@@ -76,11 +78,19 @@ def write_python_parse_table(out, parse_table):
             out.write("{}parser.flags[{}].pop()\n".format(indent, act.flag))
             return indent, True
         if isinstance(act, FunCall):
+            arg_offset = act.offset
+            if arg_offset < 0:
+                # When replayed terms are given as function arguments, they are
+                # not part of the stack. However, we cheat the system by
+                # replying all token necessary to pop them uniformly. Thus, the
+                # naming of variable for negative offsets will always match the
+                # naming of when the offset is 0.
+                arg_offset = 0
             def map_with_offset(args):
                 get_value = "parser.stack[{}].value"
                 for a in args:
                     if isinstance(a, int):
-                        yield get_value.format(-(a + act.offset))
+                        yield get_value.format(-(a + arg_offset))
                     elif isinstance(a, str):
                         yield a
                     elif isinstance(a, Some):
@@ -93,7 +103,7 @@ def write_python_parse_table(out, parse_table):
                 assert len(act.args) == 1
                 out.write("{}{} = {}\n".format(indent, act.set_to, next(map_with_offset(act.args))))
             else:
-                methods.add(act)
+                methods.add((act.method, act.args))
                 out.write("{}{} = parser.methods.{}({})\n".format(
                     indent, act.set_to, act.method,
                     ", ".join(map_with_offset(act.args))
@@ -117,6 +127,15 @@ def write_python_parse_table(out, parse_table):
         out.write("def state_{}_actions(parser, lexer{}):\n".format(i, "".join(map(lambda s: ", " + s, args))))
         if state.arguments > 0:
             out.write("    parser.replay.extend([{}])\n".format(", ".join(reversed(args))))
+        term, dest = next(iter(state.epsilon))
+        if term.update_stack():
+            # If we Unwind, make sure all elements are replayed on the stack before starting.
+            out.write("    # {}\n".format(term))
+            pop, nt, replay = term.update_stack_with()
+            if pop + replay >= 0:
+                while replay < 0:
+                    replay += 1
+                    out.write("    parser.stack.append(parser.replay.pop())\n")
         out.write("{}\n".format(parse_table.debug_context(i, "\n", "    # ")))
         out.write("    value = None\n")
         for term, dest in state.edges():
@@ -172,11 +191,10 @@ def write_python_parse_table(out, parse_table):
 
     # Class used to provide default methods when not defined by the caller.
     out.write("class DefaultMethods:\n")
-    for act in methods:
-        assert isinstance(act, FunCall)
-        args = ", ".join("x{}".format(i) for i in range(len(act.args)))
-        out.write("    def {}(self, {}):\n".format(act.method, args))
-        out.write("        return ({}, {})\n".format(repr(act.method), args))
+    for method, args in methods:
+        args = ", ".join("x{}".format(i) for i in range(len(args)))
+        out.write("    def {}(self, {}):\n".format(method, args))
+        out.write("        return ({}, {})\n".format(repr(method), args))
     if not methods:
         out.write("    pass\n")
     out.write("\n")
