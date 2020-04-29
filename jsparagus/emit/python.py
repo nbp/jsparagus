@@ -19,15 +19,21 @@ def write_python_parse_table(out, parse_table):
     out.write("\n")
 
     def write_epsilon_transition(indent, dest):
-        if parse_table.states[dest].epsilon != []:
-            assert dest < len(parse_table.states)
+        dest = parse_table.states[dest]
+        if dest.epsilon != []:
+            assert dest.index < len(parse_table.states)
             # This is a transition to an action.
-            out.write("{}state_{}_actions(parser, lexer)\n".format(indent, dest))
+            args = ""
+            for i in range(dest.arguments):
+                out.write("{}r{} = parser.replay.pop()\n".format(indent, i))
+                args += ", r{}".format(i)
+            out.write("{}state_{}_actions(parser, lexer{})\n".format(indent, dest.index, args))
         else:
             # This is a transition to a shift.
+            assert dest.arguments == 0
             out.write("{}top = parser.stack.pop()\n".format(indent))
             out.write("{}top = StateTermValue({}, top.term, top.value, top.new_line)\n"
-                      .format(indent, dest))
+                      .format(indent, dest.index))
             out.write("{}parser.stack.append(top)\n".format(indent))
 
     methods = OrderedSet()
@@ -105,7 +111,12 @@ def write_python_parse_table(out, parse_table):
         assert i == state.index
         if state.epsilon == []:
             continue
-        out.write("def state_{}_actions(parser, lexer):\n".format(i))
+        args = []
+        for j in range(state.arguments):
+            args.append("a{}".format(j))
+        out.write("def state_{}_actions(parser, lexer{}):\n".format(i, "".join(map(lambda s: ", " + s, args))))
+        if state.arguments > 0:
+            out.write("    parser.replay.extend([{}])\n".format(", ".join(reversed(args))))
         out.write("{}\n".format(parse_table.debug_context(i, "\n", "    # ")))
         out.write("    value = None\n")
         for term, dest in state.edges():

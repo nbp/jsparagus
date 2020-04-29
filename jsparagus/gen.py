@@ -1642,6 +1642,13 @@ class StateAndTransitions:
         "locations",        # Ordered set of LRItems (grammar position).
         "delayed_actions",  # Ordered set of Actions which are pushed to the
                             # next state after a conflict.
+        "arguments",        # Number of argument of an action state. When
+                            # generating action states, this represents the
+                            # term-values added as argument of the action
+                            # function. This is used to remove unnecessary
+                            # stack manipulation, such that we do not replay
+                            # terms which are immediately popped from the
+                            # stack.
         "backedges",        # Set of back edges and whether these are expected
                             # to be on the parser stack or not.
         "_hash",            # Hash to identify states which have to be merged.
@@ -1649,7 +1656,7 @@ class StateAndTransitions:
                             # grammar, and actions performed on it since.
     ]
 
-    def __init__(self, index, locations, delayed_actions=OrderedFrozenSet()):
+    def __init__(self, index, locations, delayed_actions=OrderedFrozenSet(), arguments=0):
         assert isinstance(locations, OrderedFrozenSet)
         assert isinstance(delayed_actions, OrderedFrozenSet)
         self.index = index
@@ -1659,6 +1666,7 @@ class StateAndTransitions:
         self.epsilon = []
         self.locations = locations
         self.delayed_actions = delayed_actions
+        self.arguments = arguments
         self.backedges = OrderedSet()
 
         # NOTE: The hash of a state depends on its location in the LR0
@@ -1670,6 +1678,8 @@ class StateAndTransitions:
             yield "delayed_actions"
             for action in sorted(delayed_actions):
                 yield hash(action)
+            yield "arguments"
+            yield self.arguments
 
         self._hash = hash(tuple(hashed_content()))
 
@@ -1801,6 +1811,8 @@ class StateAndTransitions:
         if sorted(self.locations) != sorted(other.locations):
             return False
         if sorted(self.delayed_actions) != sorted(other.delayed_actions):
+            return False
+        if self.arguments != other.arguments:
             return False
         return True
 
@@ -2145,12 +2157,12 @@ class ParseTable:
             (nt, state_map[s]) for nt, s in self.named_goals
         ]
 
-    def new_state(self, locations, delayed_actions=OrderedFrozenSet()):
+    def new_state(self, locations, delayed_actions=OrderedFrozenSet(), arguments=0):
         """Get or create state with an LR0 location and delayed actions. Returns a tuple
         where the first element is whether the element is newly created, and
         the second element is the State object."""
         index = len(self.states)
-        state = StateAndTransitions(index, locations, delayed_actions)
+        state = StateAndTransitions(index, locations, delayed_actions, arguments)
         try:
             return False, self.state_cache[state]
         except KeyError:
@@ -2158,10 +2170,10 @@ class ParseTable:
             self.states.append(state)
             return True, state
 
-    def get_state(self, locations, delayed_actions=OrderedFrozenSet()):
+    def get_state(self, locations, delayed_actions=OrderedFrozenSet(), arguments=0):
         """Like new_state(), but only returns the state without returning whether it is
         newly created or not."""
-        _, state = self.new_state(locations, delayed_actions)
+        _, state = self.new_state(locations, delayed_actions, arguments)
         return state
 
     def remove_state(self, s, maybe_unreachable_set):
@@ -3185,7 +3197,7 @@ class ParseTable:
                 # Add Unwind action.
                 locations = OrderedFrozenSet(reduce_state.locations)
                 delayed = OrderedFrozenSet(filter_by_replay_term.items())
-                is_new, filter_state = self.new_state(locations, delayed)
+                is_new, filter_state = self.new_state(locations, delayed, 1)
                 self.add_edge(reduce_state, unwind_term, filter_state.index)
                 if not is_new:
                     if len(filter_by_replay_term) == 1:
@@ -3213,7 +3225,7 @@ class ParseTable:
                         # Add FilterStates action from the filter_state to the replay_state.
                         locations = OrderedFrozenSet(dest.locations)
                         delayed = OrderedFrozenSet(itertools.chain(dest.delayed_actions, [replay_term]))
-                        is_new, replay_state = self.new_state(locations, delayed)
+                        is_new, replay_state = self.new_state(locations, delayed, 1)
                         self.add_edge(filter_state, filter_term, replay_state.index)
                         assert (not is_new) == (replay_term in replay_state)
 
@@ -3265,7 +3277,6 @@ class ParseTable:
                 # The Unwind action replay more terms than what we originally
                 # had. The replay term is replaced by an Unwind edge instead.
                 self.add_edge(s, new_unwind_term, unwind_dest)
-                pass
             else:
                 # The Unwind action replay less terms than what we originally
                 # had. The replay terms is shortened and a new state is created
