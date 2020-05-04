@@ -212,12 +212,11 @@ impl<'alloc> Parser<'alloc> {
         Ok(self.node_stack.pop().unwrap().value)
     }
 
-    pub(crate) fn parse_error(&self, t: &Token) -> ParseError<'alloc> {
+    pub(crate) fn parse_error(t: &Token) -> ParseError<'alloc> {
         if t.terminal_id == TerminalId::End {
             ParseError::UnexpectedEnd
         } else {
-            let token = arena::alloc(self.handler.allocator, t.clone());
-            ParseError::SyntaxError(token)
+            ParseError::SyntaxError(t.clone())
         }
     }
 
@@ -235,7 +234,7 @@ impl<'alloc> Parser<'alloc> {
             // might not be in the shifted terms coming after the reduced
             // nonterminal.
             if t.term == Term::Terminal(TerminalId::ErrorToken) {
-                return Err(self.parse_error(token));
+                return Err(Self::parse_error(token));
             }
 
             // Otherwise, check if the current rule accept an Automatic
@@ -245,7 +244,7 @@ impl<'alloc> Parser<'alloc> {
             let error_code = TABLES.error_codes[state];
             if let Some(error_code) = error_code {
                 let err_token = (*token).clone();
-                self.recover(token, error_code)?;
+                Self::recover(token, error_code)?;
                 self.replay(t);
                 let err_token = self.handler.alloc(err_token);
                 self.replay(TermValue {
@@ -255,12 +254,12 @@ impl<'alloc> Parser<'alloc> {
                 return Ok(false);
             }
             // On error, don't attempt error handling again.
-            return Err(self.parse_error(token));
+            return Err(Self::parse_error(token));
         }
         Err(ParseError::ParserCannotUnpackToken)
     }
 
-    pub(crate) fn recover(&self, t: &Token, error_code: ErrorCode) -> Result<'alloc, ()> {
+    pub(crate) fn recover(t: &Token, error_code: ErrorCode) -> Result<'alloc, ()> {
         match error_code {
             ErrorCode::Asi => {
                 if t.is_on_new_line
@@ -269,7 +268,7 @@ impl<'alloc> Parser<'alloc> {
                 {
                     Ok(())
                 } else {
-                    Err(self.parse_error(t))
+                    Err(Self::parse_error(t))
                 }
             }
             ErrorCode::DoWhileAsi => Ok(()),
@@ -278,7 +277,7 @@ impl<'alloc> Parser<'alloc> {
 
     fn simulator<'a>(&'a self) -> Simulator<'alloc, 'a> {
         assert_eq!(self.node_stack.queue_len(), 0);
-        Simulator::new(&self, &self.state_stack, self.node_stack.stack_slice())
+        Simulator::new(&self.state_stack, self.node_stack.stack_slice())
     }
 
     pub fn can_accept_terminal(&self, t: TerminalId) -> bool {
