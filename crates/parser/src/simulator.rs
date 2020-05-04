@@ -15,6 +15,8 @@ use generated_parser::{
 /// check what might be accepted, or to check whether we can End parsing now.
 /// This is used by the REPL to verify whether or not we can end the input.
 pub struct Simulator<'alloc, 'parser> {
+    /// Used to generate errors.
+    parser: &'parser Parser<'alloc>,
     /// Define the top of the immutable stack.
     sp: usize,
     /// Immutable state stack coming from the forked parser.
@@ -128,12 +130,14 @@ impl<'alloc, 'parser> ParserTrait<'alloc, ()> for Simulator<'alloc, 'parser> {
 
 impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
     pub fn new(
+        parser: &'parser Parser<'alloc>,
         state_stack: &'parser [usize],
         node_stack: &'parser [TermValue<StackValue<'alloc>>],
     ) -> Simulator<'alloc, 'parser> {
         let sp = state_stack.len() - 1;
         assert_eq!(state_stack.len(), node_stack.len() + 1);
         Simulator {
+            parser,
             sp,
             state_stack,
             node_stack,
@@ -192,7 +196,7 @@ impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
             // might not be in the shifted terms coming after the reduced
             // nonterminal.
             if t.term == Term::Terminal(TerminalId::ErrorToken) {
-                return Err(Parser::parse_error(token));
+                return Err(self.parser.parse_error(token));
             }
 
             // Otherwise, check if the current rule accept an Automatic
@@ -201,7 +205,7 @@ impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
             assert!(state < TABLES.shift_count);
             let error_code = TABLES.error_codes[state];
             if let Some(error_code) = error_code {
-                Parser::recover(token, error_code)?;
+                self.parser.recover(token, error_code)?;
                 self.replay(t);
                 self.replay(TermValue {
                     term: Term::Terminal(TerminalId::ErrorToken),
@@ -209,7 +213,7 @@ impl<'alloc, 'parser> Simulator<'alloc, 'parser> {
                 });
                 return Ok(false);
             }
-            return Err(Parser::parse_error(token));
+            return Err(self.parser.parse_error(token));
         }
         // On error, don't attempt error handling again.
         Err(ParseError::ParserCannotUnpackToken)

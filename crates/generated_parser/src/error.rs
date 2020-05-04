@@ -18,7 +18,7 @@ pub enum ParseError<'alloc> {
 
     // Generic syntax errors
     NotImplemented(&'static str),
-    SyntaxError(Token),
+    SyntaxError(arena::Box<'alloc, Token>),
     UnexpectedEnd,
     InvalidAssignmentTarget,
     InvalidParameter,
@@ -62,7 +62,7 @@ impl<'alloc> ParseError<'alloc> {
             ),
             ParseError::ParserCannotUnpackToken => format!("cannot unpack token"),
             ParseError::NotImplemented(message) => format!("not implemented: {}", message),
-            ParseError::SyntaxError(token) => format!("syntax error on: {:?}", token),
+            ParseError::SyntaxError(ref token) => format!("syntax error on: {:?}", token),
             ParseError::UnexpectedEnd => format!("unexpected end of input"),
             ParseError::InvalidAssignmentTarget => format!("invalid left-hand side of assignment"),
             ParseError::InvalidParameter => format!("invalid parameter"),
