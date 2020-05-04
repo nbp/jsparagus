@@ -4,6 +4,7 @@ use crate::ParseError;
 use crate::Token;
 use ast::arena;
 use ast::source_atom_set::{CommonSourceAtomSetIndices, SourceAtomSet, SourceAtomSetIndex};
+use bumpalo::Bump;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -27,6 +28,7 @@ pub trait LexicalEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc>;
 }
 
@@ -37,6 +39,7 @@ pub trait VarEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc>;
 }
 
@@ -46,6 +49,7 @@ pub trait ParameterEarlyErrorsContext {
         name: SourceAtomSetIndex,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc>;
 }
 
@@ -606,6 +610,7 @@ impl LexicalEarlyErrorsContext for BlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -633,13 +638,10 @@ impl LexicalEarlyErrorsContext for BlockEarlyErrorsContext {
                 && kind == DeclarationKind::LexicalFunction)
             {
                 let name = atoms.get(name);
-                return Err(ParseError::DuplicateBinding(
-                    name,
-                    info.kind,
-                    info.offset,
-                    kind,
-                    offset,
-                ));
+                return Err(ParseError::DuplicateBinding(arena::alloc(
+                    allocator,
+                    (name, info.kind, info.offset, kind, offset),
+                )));
             }
         }
 
@@ -653,13 +655,10 @@ impl LexicalEarlyErrorsContext for BlockEarlyErrorsContext {
         //   StatementList.
         if let Some(info) = self.var_names_of_stmt_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.lex_names_of_stmt_list
@@ -676,6 +675,7 @@ impl VarEarlyErrorsContext for BlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -689,13 +689,10 @@ impl VarEarlyErrorsContext for BlockEarlyErrorsContext {
         //   StatementList.
         if let Some(info) = self.lex_names_of_stmt_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.var_names_of_stmt_list
@@ -759,6 +756,7 @@ impl LexicalEarlyErrorsContext for LexicalForHeadEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -791,13 +789,10 @@ impl LexicalEarlyErrorsContext for LexicalForHeadEarlyErrorsContext {
         //   any duplicate entries.
         if let Some(info) = self.bound_names_of_decl.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.bound_names_of_decl
@@ -838,6 +833,7 @@ impl VarEarlyErrorsContext for InternalForBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         _atoms: &SourceAtomSet<'alloc>,
+        _allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -870,6 +866,7 @@ impl VarEarlyErrorsContext for LexicalForBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-for-statement-static-semantics-early-errors
@@ -896,16 +893,13 @@ impl VarEarlyErrorsContext for LexicalForBodyEarlyErrorsContext {
         //   ForDeclaration also occurs in the VarDeclaredNames of Statement.
         if let Some(info) = self.head.bound_names_of_decl.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
-        self.body.declare_var(name, kind, offset, atoms)
+        self.body.declare_var(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -952,6 +946,7 @@ impl LexicalEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -977,13 +972,10 @@ impl LexicalEarlyErrorsContext for CaseBlockEarlyErrorsContext {
                 && kind == DeclarationKind::LexicalFunction)
             {
                 let name = atoms.get(name);
-                return Err(ParseError::DuplicateBinding(
-                    name,
-                    info.kind,
-                    info.offset,
-                    kind,
-                    offset,
-                ));
+                return Err(ParseError::DuplicateBinding(arena::alloc(
+                    allocator,
+                    (name, info.kind, info.offset, kind, offset),
+                )));
             }
         }
 
@@ -996,13 +988,10 @@ impl LexicalEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         //   of CaseBlock also occurs in the VarDeclaredNames of CaseBlock.
         if let Some(info) = self.var_names_of_case_block.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.lex_names_of_case_block
@@ -1019,6 +1008,7 @@ impl VarEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -1031,13 +1021,10 @@ impl VarEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         //   of CaseBlock also occurs in the VarDeclaredNames of CaseBlock.
         if let Some(info) = self.lex_names_of_case_block.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.var_names_of_case_block
@@ -1080,6 +1067,7 @@ impl ParameterEarlyErrorsContext for CatchParameterEarlyErrorsContext {
         name: SourceAtomSetIndex,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // BoundNames of CatchParameter
         //
@@ -1096,9 +1084,10 @@ impl ParameterEarlyErrorsContext for CatchParameterEarlyErrorsContext {
         //   duplicate elements.
         if let Some(info) = self.bound_names_of_catch_param.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name, info.kind, offset, kind, offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, offset, kind, offset),
+            )));
         }
 
         self.bound_names_of_catch_param
@@ -1130,6 +1119,7 @@ impl LexicalEarlyErrorsContext for CatchBlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-try-statement-static-semantics-early-errors
@@ -1140,12 +1130,13 @@ impl LexicalEarlyErrorsContext for CatchBlockEarlyErrorsContext {
         //   CatchParameter also occurs in the LexicallyDeclaredNames of Block.
         if let Some(info) = self.param.bound_names_of_catch_param.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name, info.kind, offset, kind, offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, offset, kind, offset),
+            )));
         }
 
-        self.block.declare_lex(name, kind, offset, atoms)
+        self.block.declare_lex(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1156,6 +1147,7 @@ impl VarEarlyErrorsContext for CatchBlockEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-try-statement-static-semantics-early-errors
@@ -1176,17 +1168,14 @@ impl VarEarlyErrorsContext for CatchBlockEarlyErrorsContext {
             //   unless CatchParameter is CatchParameter : BindingIdentifier **.
             if !self.param.is_simple {
                 let name = atoms.get(name);
-                return Err(ParseError::DuplicateBinding(
-                    name,
-                    info.kind,
-                    info.offset,
-                    kind,
-                    offset,
-                ));
+                return Err(ParseError::DuplicateBinding(arena::alloc(
+                    allocator,
+                    (name, info.kind, info.offset, kind, offset),
+                )));
             }
         }
 
-        self.block.declare_var(name, kind, offset, atoms)
+        self.block.declare_var(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1241,6 +1230,7 @@ impl ParameterEarlyErrorsContext for FormalParametersEarlyErrorsContext {
         name: SourceAtomSetIndex,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // BoundNames of FormalParameterList
         //
@@ -1277,13 +1267,10 @@ impl ParameterEarlyErrorsContext for FormalParametersEarlyErrorsContext {
         if let Some(info) = self.bound_names_of_params.get(&name) {
             if !self.is_simple {
                 let name = atoms.get(name);
-                return Err(ParseError::DuplicateBinding(
-                    name,
-                    info.kind,
-                    info.offset,
-                    kind,
-                    offset,
-                ));
+                return Err(ParseError::DuplicateBinding(arena::alloc(
+                    allocator,
+                    (name, info.kind, info.offset, kind, offset),
+                )));
             }
         }
 
@@ -1313,6 +1300,7 @@ impl ParameterEarlyErrorsContext for UniqueFormalParametersEarlyErrorsContext {
         name: SourceAtomSetIndex,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         let kind = DeclarationKind::FormalParameter;
 
@@ -1336,13 +1324,10 @@ impl ParameterEarlyErrorsContext for UniqueFormalParametersEarlyErrorsContext {
         //   contains any duplicate elements.
         if let Some(info) = self.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.bound_names_of_params
@@ -1472,6 +1457,7 @@ impl LexicalEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -1484,13 +1470,10 @@ impl LexicalEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList contains any duplicate entries.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         // Static Semantics: Early Errors
@@ -1503,13 +1486,10 @@ impl LexicalEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList.
         if let Some(info) = self.var_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.lex_names_of_body
@@ -1526,6 +1506,7 @@ impl VarEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -1539,13 +1520,10 @@ impl VarEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.var_names_of_body
@@ -1589,6 +1567,7 @@ impl LexicalEarlyErrorsContext for FunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-function-definitions-static-semantics-early-errors
@@ -1661,16 +1640,13 @@ impl LexicalEarlyErrorsContext for FunctionBodyEarlyErrorsContext {
         //   AsyncFunctionBody.
         if let Some(info) = self.param.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
-        self.body.declare_lex(name, kind, offset, atoms)
+        self.body.declare_lex(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1681,8 +1657,9 @@ impl VarEarlyErrorsContext for FunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
-        self.body.declare_var(name, kind, offset, atoms)
+        self.body.declare_var(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1719,6 +1696,7 @@ impl LexicalEarlyErrorsContext for UniqueFunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-arrow-function-definitions-static-semantics-early-errors
@@ -1805,16 +1783,13 @@ impl LexicalEarlyErrorsContext for UniqueFunctionBodyEarlyErrorsContext {
         //   LexicallyDeclaredNames of AsyncConciseBody.
         if let Some(info) = self.param.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
-        self.body.declare_lex(name, kind, offset, atoms)
+        self.body.declare_lex(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1825,8 +1800,9 @@ impl VarEarlyErrorsContext for UniqueFunctionBodyEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
-        self.body.declare_var(name, kind, offset, atoms)
+        self.body.declare_var(name, kind, offset, atoms, allocator)
     }
 }
 
@@ -1895,6 +1871,7 @@ impl LexicalEarlyErrorsContext for ScriptEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -1907,13 +1884,10 @@ impl LexicalEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         // Static Semantics: Early Errors
@@ -1925,13 +1899,10 @@ impl LexicalEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   of ScriptBody also occurs in the VarDeclaredNames of ScriptBody.
         if let Some(info) = self.var_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.lex_names_of_body
@@ -1948,6 +1919,7 @@ impl VarEarlyErrorsContext for ScriptEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -1960,13 +1932,10 @@ impl VarEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   of ScriptBody also occurs in the VarDeclaredNames of ScriptBody.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.var_names_of_body
@@ -2080,6 +2049,7 @@ impl ModuleEarlyErrorsContext {
         name: SourceAtomSetIndex,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         // Static Semantics: Early Errors
         // https://tc39.es/ecma262/#sec-module-semantics-static-semantics-early-errors
@@ -2090,11 +2060,10 @@ impl ModuleEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(prev_offset) = self.exported_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateExport(
-                name,
-                prev_offset.clone(),
-                offset,
-            ));
+            return Err(ParseError::DuplicateExport(arena::alloc(
+                allocator,
+                (name, prev_offset.clone(), offset),
+            )));
         }
 
         self.exported_names_of_item_list.insert(name, offset);
@@ -2140,6 +2109,7 @@ impl LexicalEarlyErrorsContext for ModuleEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_lexical(kind));
 
@@ -2162,13 +2132,10 @@ impl LexicalEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(info) = self.lex_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         // Static Semantics: Early Errors
@@ -2182,13 +2149,10 @@ impl LexicalEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   ModuleItemList.
         if let Some(info) = self.var_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.lex_names_of_item_list
@@ -2205,6 +2169,7 @@ impl VarEarlyErrorsContext for ModuleEarlyErrorsContext {
         kind: DeclarationKind,
         offset: usize,
         atoms: &SourceAtomSet<'alloc>,
+        allocator: &'alloc Bump,
     ) -> EarlyErrorsResult<'alloc> {
         debug_assert!(Self::is_supported_var(kind));
 
@@ -2218,13 +2183,10 @@ impl VarEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   ModuleItemList.
         if let Some(info) = self.lex_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(ParseError::DuplicateBinding(arena::alloc(
+                allocator,
+                (name, info.kind, info.offset, kind, offset),
+            )));
         }
 
         self.var_names_of_item_list

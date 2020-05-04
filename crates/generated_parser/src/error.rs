@@ -1,7 +1,8 @@
 use crate::stack_value_generated::AstError;
 use crate::DeclarationKind;
 use crate::Token;
-use std::{convert::Infallible, error::Error, fmt};
+use ast::arena;
+use std::{convert::Infallible, error::Error, fmt, ops::Deref};
 
 #[derive(Debug)]
 pub enum ParseError<'alloc> {
@@ -35,8 +36,10 @@ pub enum ParseError<'alloc> {
     ArrowHeadInvalid,
     ArrowParametersWithNonFinalRest,
 
-    DuplicateBinding(&'alloc str, DeclarationKind, usize, DeclarationKind, usize),
-    DuplicateExport(&'alloc str, usize, usize),
+    DuplicateBinding(
+        arena::Box<'alloc, (&'alloc str, DeclarationKind, usize, DeclarationKind, usize)>,
+    ),
+    DuplicateExport(arena::Box<'alloc, (&'alloc str, usize, usize)>),
     MissingExport(&'alloc str, usize),
 
     // Annex B. FunctionDeclarations in IfStatement Statement Clauses
@@ -86,16 +89,19 @@ impl<'alloc> ParseError<'alloc> {
             ParseError::ArrowParametersWithNonFinalRest => format!(
                 "arrow function parameters can have a rest element (`...x`) only at the end"
             ),
-            ParseError::DuplicateBinding(name, kind1, _, kind2, _) => format!(
-                "redeclaration of {} '{}' with {}",
-                kind1.to_str(),
-                name,
-                kind2.to_str(),
-            ),
-            ParseError::DuplicateExport(name, _, _) => format!(
-                "duplicate export name '{}'",
-                name,
-            ),
+            ParseError::DuplicateBinding(ref info) => {
+                let (name, kind1, _, kind2, _) = *Deref::deref(info);
+                format!(
+                    "redeclaration of {} '{}' with {}",
+                    kind1.to_str(),
+                    name,
+                    kind2.to_str(),
+                )
+            }
+            ParseError::DuplicateExport(ref info) => {
+                let (name, _, _) = *Deref::deref(info);
+                format!("duplicate export name '{}'", name)
+            }
             ParseError::MissingExport(name, _) => format!(
                 "local binding for export '{}' not found",
                 name,
