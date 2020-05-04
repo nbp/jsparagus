@@ -4645,7 +4645,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Var,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Function => {
@@ -4654,7 +4653,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::LexicalFunction,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::AsyncOrGenerator => {
@@ -4663,7 +4661,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::LexicalAsyncOrGenerator,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Let => {
@@ -4672,7 +4669,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Let,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Const => {
@@ -4681,7 +4677,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Const,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Class => {
@@ -4690,7 +4685,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Class,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 _ => {
@@ -4727,7 +4721,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Let,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Const => {
@@ -4736,7 +4729,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Const,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 _ => {
@@ -4762,7 +4754,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Var,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 _ => {
@@ -4806,12 +4797,7 @@ impl<'alloc> AstBuilder<'alloc> {
         T: ParameterEarlyErrorsContext,
     {
         for info in self.bindings.iter().skip(from).take(to - from) {
-            context.declare(
-                info.name,
-                info.offset,
-                &self.atoms.borrow(),
-                &self.allocator,
-            )?;
+            context.declare(info.name, info.offset, &self.atoms.borrow())?;
         }
 
         Ok(())
@@ -4866,7 +4852,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Var,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Function | BindingKind::AsyncOrGenerator => {
@@ -4875,7 +4860,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::BodyLevelFunction,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Let => {
@@ -4884,7 +4868,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Let,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Const => {
@@ -4893,7 +4876,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Const,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 BindingKind::Class => {
@@ -4902,7 +4884,6 @@ impl<'alloc> AstBuilder<'alloc> {
                         DeclarationKind::Class,
                         info.offset,
                         &self.atoms.borrow(),
-                        &self.allocator,
                     )?;
                 }
                 _ => {
