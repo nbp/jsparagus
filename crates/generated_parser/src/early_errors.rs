@@ -1,7 +1,7 @@
 use crate::parser_tables_generated::TerminalId;
 use crate::DeclarationKind;
-use crate::ParseError;
 use crate::Token;
+use crate::{ParseError, Result};
 use ast::arena;
 use ast::source_atom_set::{CommonSourceAtomSetIndices, SourceAtomSet, SourceAtomSetIndex};
 use std::collections::HashMap;
@@ -18,7 +18,7 @@ impl DeclarationInfo {
     }
 }
 
-pub type EarlyErrorsResult<'alloc> = Result<(), ParseError<'alloc>>;
+pub type EarlyErrorsResult<'alloc> = Result<'alloc, ()>;
 
 pub trait LexicalEarlyErrorsContext {
     fn declare_lex<'alloc>(
@@ -62,10 +62,8 @@ impl IdentifierEarlyErrorsContext {
         Self {}
     }
 
-    fn is_strict<'alloc>(&self) -> Result<bool, ParseError<'alloc>> {
-        Err(ParseError::NotImplemented(
-            "strict-mode-only early error is not yet supported",
-        ))
+    fn is_strict<'alloc>(&self) -> Result<'alloc, bool> {
+        Err(ParseError::NotImplemented("strict-mode-only early error is not yet supported").into())
     }
 
     // Not used due to NotImplemented before the callsite.
@@ -118,7 +116,7 @@ impl IdentifierEarlyErrorsContext {
             if self.is_strict()? {
                 let name = atoms.get(token.value.as_atom());
                 let offset = token.loc.start;
-                return Err(ParseError::InvalidIdentifier(name.clone(), offset));
+                return Err(ParseError::InvalidIdentifier(name.clone(), offset).into());
             }
 
             return Ok(());
@@ -129,7 +127,7 @@ impl IdentifierEarlyErrorsContext {
             //
             // * It is a Syntax Error if this production has a [Yield]
             //   parameter.
-            return Err(ParseError::NotImplemented("[Yield] parameter"));
+            return Err(ParseError::NotImplemented("[Yield] parameter").into());
 
             // return self.check_yield_common();
         }
@@ -139,7 +137,7 @@ impl IdentifierEarlyErrorsContext {
             //
             // * It is a Syntax Error if this production has an [Await]
             //   parameter.
-            return Err(ParseError::NotImplemented("[Await] parameter"));
+            return Err(ParseError::NotImplemented("[Await] parameter").into());
 
             // return self.check_await_common();
         }
@@ -195,7 +193,7 @@ impl IdentifierEarlyErrorsContext {
         //
         // * It is a Syntax Error if this production has a [Yield] parameter
         //   and StringValue of Identifier is "yield".
-        return Err(ParseError::NotImplemented("[Yield] parameter"));
+        return Err(ParseError::NotImplemented("[Yield] parameter").into());
 
         // IdentifierReference : yield
         //
@@ -241,7 +239,7 @@ impl IdentifierEarlyErrorsContext {
         //
         // * It is a Syntax Error if this production has an [Await] parameter
         //   and StringValue of Identifier is "await".
-        return Err(ParseError::NotImplemented("[Await] parameter"));
+        return Err(ParseError::NotImplemented("[Await] parameter").into());
 
         // IdentifierReference : await
         //
@@ -342,7 +340,7 @@ impl IdentifierEarlyErrorsContext {
                     if self.is_strict()? {
                         let name = atoms.get(token.value.as_atom());
                         let offset = token.loc.start;
-                        return Err(ParseError::InvalidIdentifier(name, offset));
+                        return Err(ParseError::InvalidIdentifier(name, offset).into());
                     }
                 } else if Self::is_keyword(name) {
                     // Identifier : IdentifierName but not ReservedWord
@@ -353,7 +351,7 @@ impl IdentifierEarlyErrorsContext {
                     //   or await.
                     let name = atoms.get(token.value.as_atom());
                     let offset = token.loc.start;
-                    return Err(ParseError::InvalidIdentifier(name, offset));
+                    return Err(ParseError::InvalidIdentifier(name, offset).into());
                 }
             }
             TerminalId::Implements
@@ -375,7 +373,7 @@ impl IdentifierEarlyErrorsContext {
                 if self.is_strict()? {
                     let name = atoms.get(token.value.as_atom());
                     let offset = token.loc.start;
-                    return Err(ParseError::InvalidIdentifier(name, offset));
+                    return Err(ParseError::InvalidIdentifier(name, offset).into());
                 }
             }
             _ => {}
@@ -592,10 +590,8 @@ impl BlockEarlyErrorsContext {
         }
     }
 
-    fn is_strict<'alloc>(&self) -> Result<bool, ParseError<'alloc>> {
-        Err(ParseError::NotImplemented(
-            "strict-mode-only early error is not yet supported",
-        ))
+    fn is_strict<'alloc>(&self) -> Result<'alloc, bool> {
+        Err(ParseError::NotImplemented("strict-mode-only early error is not yet supported").into())
     }
 }
 
@@ -639,7 +635,8 @@ impl LexicalEarlyErrorsContext for BlockEarlyErrorsContext {
                     info.offset,
                     kind,
                     offset,
-                ));
+                )
+                .into());
             }
         }
 
@@ -653,13 +650,9 @@ impl LexicalEarlyErrorsContext for BlockEarlyErrorsContext {
         //   StatementList.
         if let Some(info) = self.var_names_of_stmt_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.lex_names_of_stmt_list
@@ -689,13 +682,9 @@ impl VarEarlyErrorsContext for BlockEarlyErrorsContext {
         //   StatementList.
         if let Some(info) = self.lex_names_of_stmt_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.var_names_of_stmt_list
@@ -791,13 +780,9 @@ impl LexicalEarlyErrorsContext for LexicalForHeadEarlyErrorsContext {
         //   any duplicate entries.
         if let Some(info) = self.bound_names_of_decl.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.bound_names_of_decl
@@ -896,13 +881,9 @@ impl VarEarlyErrorsContext for LexicalForBodyEarlyErrorsContext {
         //   ForDeclaration also occurs in the VarDeclaredNames of Statement.
         if let Some(info) = self.head.bound_names_of_decl.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.body.declare_var(name, kind, offset, atoms)
@@ -938,10 +919,8 @@ impl CaseBlockEarlyErrorsContext {
         BlockEarlyErrorsContext::is_supported_var(kind)
     }
 
-    fn is_strict<'alloc>(&self) -> Result<bool, ParseError<'alloc>> {
-        Err(ParseError::NotImplemented(
-            "strict-mode-only early error is not yet supported",
-        ))
+    fn is_strict<'alloc>(&self) -> Result<'alloc, bool> {
+        Err(ParseError::NotImplemented("strict-mode-only early error is not yet supported").into())
     }
 }
 
@@ -983,7 +962,8 @@ impl LexicalEarlyErrorsContext for CaseBlockEarlyErrorsContext {
                     info.offset,
                     kind,
                     offset,
-                ));
+                )
+                .into());
             }
         }
 
@@ -996,13 +976,9 @@ impl LexicalEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         //   of CaseBlock also occurs in the VarDeclaredNames of CaseBlock.
         if let Some(info) = self.var_names_of_case_block.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.lex_names_of_case_block
@@ -1031,13 +1007,9 @@ impl VarEarlyErrorsContext for CaseBlockEarlyErrorsContext {
         //   of CaseBlock also occurs in the VarDeclaredNames of CaseBlock.
         if let Some(info) = self.lex_names_of_case_block.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.var_names_of_case_block
@@ -1096,9 +1068,7 @@ impl ParameterEarlyErrorsContext for CatchParameterEarlyErrorsContext {
         //   duplicate elements.
         if let Some(info) = self.bound_names_of_catch_param.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name, info.kind, offset, kind, offset,
-            ));
+            return Err(ParseError::DuplicateBinding(name, info.kind, offset, kind, offset).into());
         }
 
         self.bound_names_of_catch_param
@@ -1140,9 +1110,7 @@ impl LexicalEarlyErrorsContext for CatchBlockEarlyErrorsContext {
         //   CatchParameter also occurs in the LexicallyDeclaredNames of Block.
         if let Some(info) = self.param.bound_names_of_catch_param.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name, info.kind, offset, kind, offset,
-            ));
+            return Err(ParseError::DuplicateBinding(name, info.kind, offset, kind, offset).into());
         }
 
         self.block.declare_lex(name, kind, offset, atoms)
@@ -1182,7 +1150,8 @@ impl VarEarlyErrorsContext for CatchBlockEarlyErrorsContext {
                     info.offset,
                     kind,
                     offset,
-                ));
+                )
+                .into());
             }
         }
 
@@ -1283,7 +1252,8 @@ impl ParameterEarlyErrorsContext for FormalParametersEarlyErrorsContext {
                     info.offset,
                     kind,
                     offset,
-                ));
+                )
+                .into());
             }
         }
 
@@ -1336,13 +1306,9 @@ impl ParameterEarlyErrorsContext for UniqueFormalParametersEarlyErrorsContext {
         //   contains any duplicate elements.
         if let Some(info) = self.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.bound_names_of_params
@@ -1484,13 +1450,9 @@ impl LexicalEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList contains any duplicate entries.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         // Static Semantics: Early Errors
@@ -1503,13 +1465,9 @@ impl LexicalEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList.
         if let Some(info) = self.var_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.lex_names_of_body
@@ -1539,13 +1497,9 @@ impl VarEarlyErrorsContext for InternalFunctionBodyEarlyErrorsContext {
         //   FunctionStatementList.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.var_names_of_body
@@ -1661,13 +1615,9 @@ impl LexicalEarlyErrorsContext for FunctionBodyEarlyErrorsContext {
         //   AsyncFunctionBody.
         if let Some(info) = self.param.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.body.declare_lex(name, kind, offset, atoms)
@@ -1805,13 +1755,9 @@ impl LexicalEarlyErrorsContext for UniqueFunctionBodyEarlyErrorsContext {
         //   LexicallyDeclaredNames of AsyncConciseBody.
         if let Some(info) = self.param.bound_names_of_params.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.body.declare_lex(name, kind, offset, atoms)
@@ -1907,13 +1853,9 @@ impl LexicalEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         // Static Semantics: Early Errors
@@ -1925,13 +1867,9 @@ impl LexicalEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   of ScriptBody also occurs in the VarDeclaredNames of ScriptBody.
         if let Some(info) = self.var_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.lex_names_of_body
@@ -1960,13 +1898,9 @@ impl VarEarlyErrorsContext for ScriptEarlyErrorsContext {
         //   of ScriptBody also occurs in the VarDeclaredNames of ScriptBody.
         if let Some(info) = self.lex_names_of_body.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.var_names_of_body
@@ -2090,11 +2024,7 @@ impl ModuleEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(prev_offset) = self.exported_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateExport(
-                name,
-                prev_offset.clone(),
-                offset,
-            ));
+            return Err(ParseError::DuplicateExport(name, prev_offset.clone(), offset).into());
         }
 
         self.exported_names_of_item_list.insert(name, offset);
@@ -2125,7 +2055,7 @@ impl ModuleEarlyErrorsContext {
                 && !self.lex_names_of_item_list.contains_key(name)
             {
                 let name = atoms.get(*name);
-                return Err(ParseError::MissingExport(name, offset.clone()));
+                return Err(ParseError::MissingExport(name, offset.clone()).into());
             }
         }
 
@@ -2162,13 +2092,9 @@ impl LexicalEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   contains any duplicate entries.
         if let Some(info) = self.lex_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         // Static Semantics: Early Errors
@@ -2182,13 +2108,9 @@ impl LexicalEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   ModuleItemList.
         if let Some(info) = self.var_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.lex_names_of_item_list
@@ -2218,13 +2140,9 @@ impl VarEarlyErrorsContext for ModuleEarlyErrorsContext {
         //   ModuleItemList.
         if let Some(info) = self.lex_names_of_item_list.get(&name) {
             let name = atoms.get(name);
-            return Err(ParseError::DuplicateBinding(
-                name,
-                info.kind,
-                info.offset,
-                kind,
-                offset,
-            ));
+            return Err(
+                ParseError::DuplicateBinding(name, info.kind, info.offset, kind, offset).into(),
+            );
         }
 
         self.var_names_of_item_list

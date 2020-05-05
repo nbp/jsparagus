@@ -144,7 +144,7 @@ impl<'alloc> ParserTrait<'alloc, StackValue<'alloc>> for Parser<'alloc> {
             self.try_error_handling(tv)?;
             return Ok(false);
         }
-        Err(ParseError::NoLineTerminatorHereExpectedToken)
+        Err(ParseError::NoLineTerminatorHereExpectedToken.into())
     }
 }
 
@@ -234,7 +234,7 @@ impl<'alloc> Parser<'alloc> {
             // might not be in the shifted terms coming after the reduced
             // nonterminal.
             if t.term == Term::Terminal(TerminalId::ErrorToken) {
-                return Err(Self::parse_error(token));
+                return Err(Self::parse_error(token).into());
             }
 
             // Otherwise, check if the current rule accept an Automatic
@@ -254,9 +254,9 @@ impl<'alloc> Parser<'alloc> {
                 return Ok(false);
             }
             // On error, don't attempt error handling again.
-            return Err(Self::parse_error(token));
+            return Err(Self::parse_error(token).into());
         }
-        Err(ParseError::ParserCannotUnpackToken)
+        Err(ParseError::ParserCannotUnpackToken.into())
     }
 
     pub(crate) fn recover(t: &Token, error_code: ErrorCode) -> Result<'alloc, ()> {
@@ -268,7 +268,7 @@ impl<'alloc> Parser<'alloc> {
                 {
                     Ok(())
                 } else {
-                    Err(Self::parse_error(t))
+                    Err(Self::parse_error(t).into())
                 }
             }
             ErrorCode::DoWhileAsi => Ok(()),
