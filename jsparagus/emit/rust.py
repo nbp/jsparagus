@@ -373,7 +373,7 @@ class RustActionWriter:
 
         _, nt, _ = act.update_stack_with()
         assert nt is not None
-        self.write("let term = Term::Nonterminal(NonterminalId::{});",
+        self.write("let term = NonterminalId::{}.into();",
                    self.writer.nonterminal_to_camel(nt))
         if value != "value":
             self.write("let value = {};", value)
@@ -549,6 +549,7 @@ class RustParserWriter:
 
     def terms_id(self):
         self.write(0, "#[derive(Copy, Clone, Debug, PartialEq)]")
+        self.write(0, "#[repr(u32)]")
         self.write(0, "pub enum TerminalId {")
         for i, t in enumerate(self.terminals):
             name = self.terminal_name(t)
@@ -556,6 +557,7 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "#[derive(Clone, Copy, Debug, PartialEq)]")
+        self.write(0, "#[repr(u32)]")
         self.write(0, "pub enum NonterminalId {")
         offset = len(self.terminals)
         for i, nt in enumerate(self.nonterminals):
@@ -563,29 +565,45 @@ class RustParserWriter:
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "#[derive(Clone, Copy, Debug, PartialEq)]")
-        self.write(0, "pub enum Term {")
-        self.write(1, "Terminal(TerminalId),")
-        self.write(1, "Nonterminal(NonterminalId),")
+        self.write(0, "pub struct Term(u32);")
+        self.write(0, "")
+        self.write(0, "impl Term {")
+        self.write(1, "pub fn is_terminal(&self) -> bool {")
+        self.write(2, "self.0 < {}", offset)
+        self.write(1, "}")
+        self.write(1, "pub fn to_terminal(&self) -> TerminalId {")
+        self.write(2, "assert!(self.is_terminal());")
+        self.write(2, "unsafe {{ std::mem::transmute(self.0) }}")
+        self.write(1, "}")
+        self.write(0, "}")
+        self.write(0, "")
+        self.write(0, "impl From<TerminalId> for Term {")
+        self.write(1, "fn from(t: TerminalId) -> Self {")
+        self.write(2, "Term(t as _)")
+        self.write(1, "}")
+        self.write(0, "}")
+        self.write(0, "")
+        self.write(0, "impl From<NonterminalId> for Term {")
+        self.write(1, "fn from(nt: NonterminalId) -> Self {")
+        self.write(2, "Term(nt as _)")
+        self.write(1, "}")
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "impl From<Term> for usize {")
         self.write(1, "fn from(term: Term) -> Self {")
-        self.write(2, "match term {")
-        self.write(3, "Term::Terminal(t) => t as usize,")
-        self.write(3, "Term::Nonterminal(nt) => nt as usize,")
-        self.write(2, "}")
+        self.write(2, "term.0 as _")
         self.write(1, "}")
         self.write(0, "}")
         self.write(0, "")
         self.write(0, "impl From<Term> for &'static str {")
         self.write(1, "fn from(term: Term) -> Self {")
-        self.write(2, "match term {")
-        for t in self.terminals:
-            name = self.terminal_name(t)
-            self.write(3, "Term::Terminal(TerminalId::{}) => &\"{}\",", name, repr(t))
-        for nt in self.nonterminals:
-            name = self.nonterminal_to_camel(nt)
-            self.write(3, "Term::Nonterminal(NonterminalId::{}) => &\"{}\",", name, str(nt.name))
+        self.write(2, "match term.0 {")
+        for i, t in enumerate(self.terminals):
+            self.write(3, "{} => &\"{}\",", i, repr(t))
+        for j, nt in enumerate(self.nonterminals):
+            i = j + offset
+            self.write(3, "{} => &\"{}\",", i, str(nt.name))
+        self.write(3, "_ => panic!(\"unknown Term\")", i, str(nt.name))
         self.write(2, "}")
         self.write(1, "}")
         self.write(0, "}")
