@@ -65,6 +65,14 @@ class ESTestCase(unittest.TestCase):
         self.assert_syntax_error(
             "switch (value) { case 1: break case 2: console.log('2'); }")
 
+    def test_asi_after_no_line_terminator_here(self):
+        self.assert_parses('''\
+           function f() {
+             return
+               x;
+           }
+        ''')
+
     def test_asi_suppressed(self):
         # The specification says ASI does not happen in the production
         # EmptyStatement : `;`.
@@ -152,7 +160,7 @@ class ESTestCase(unittest.TestCase):
                ('expression_statement',
                 ('compound_assignment_expr',
                  ('identifier_expr', ('identifier_reference', 'x')),
-                 ('box_assign_op', ('div_assign_op',)),
+                 ('box_assign_op', ('div_assign_op', '/=')),
                  ('numeric_literal', '2')))))))
 
     def test_can_close(self):
@@ -177,7 +185,6 @@ class ESTestCase(unittest.TestCase):
             }
         """)
 
-
         self.assert_parses("var let = [new Date];")    # let as identifier
         self.assert_parses("let v = let;")             # let as keyword, then identifier
         # Next line would fail because the multitoken `let [` lookahead isn't implemented yet.
@@ -193,7 +200,7 @@ class ESTestCase(unittest.TestCase):
         self.assert_parses("async: { break async; }")
         self.assert_parses("var get = { get get() {}, set get(v) {}, set: 3 };")
         self.assert_parses("for (async of => {};;) {}")
-        #self.assert_parses("for (async of []) {}")  # would fail
+        # self.assert_parses("for (async of []) {}")  # would fail
 
 
 if __name__ == '__main__':

@@ -26,6 +26,7 @@ import jsparagus.lexer
 
 def _get_punctuators():
     punctuators = '''
+        &&= ||= ??=
         { ( ) [ ] . ... ; , < > <= >= == != === !== + - * % ** ++ --
         << >> >>> & | ^ ! ~ && || ? : = += -= *= %=
         **= ><<= >>= >>>= &= |= ^= =>
@@ -260,7 +261,7 @@ class JSLexer(jsparagus.lexer.FlatStringLexer):
             # the parser rewind the lexer one token and ask for it again in
             # that case, so that the lexer asks the can-accept question again.
             point = match.start(1)
-            if self.parser.can_accept_terminal('RegularExpressionLiteral'):
+            if self.parser.can_accept_terminal(self, 'RegularExpressionLiteral'):
                 match = REGEXP_RE.match(self.src, point)
                 if match is None:
                     if closing:
@@ -303,11 +304,7 @@ class JSLexer(jsparagus.lexer.FlatStringLexer):
         return self._current_match.group(1)
 
     def saw_line_terminator(self):
-        """True if there's a LineTerminator before the current token.
-
-        Call this only after having called `.peek()` more recently than
-        `.take()`.
-        """
+        """True if there's a LineTerminator before the current token."""
         i = self.previous_token_end
         j = self.current_token_start
         ws_between = self.src[i:j]

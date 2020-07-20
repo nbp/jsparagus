@@ -1,0 +1,18 @@
+[package]
+name = "jsparagus-interpreter"
+version = "0.1.0"
+authors = ["Tom Schuster <evilpies@gmail.com>"]
+edition = "2018"
+license = "MIT/Apache-2.0"
+
+[dependencies]
+jsparagus-emitter = { path = "../emitter" }
+jsparagus-stencil = { path = "../stencil" }
+
+[dev-dependencies]
+bumpalo = "3.4.0"
+jsparagus-ast = { path = "../ast" }
+jsparagus-parser = { path = "../parser" }
+
+[features]
+logging = ["jsparagus-parser/logging"]

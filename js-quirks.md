@@ -1,11 +1,19 @@
 ## JS syntactic quirks
 
+> *To make a labyrinth, it takes*
+> *Some good intentions, some mistakes.*
+> —A. E. Stallings, “Daedal”
+
 JavaScript is rather hard to parse. Here is an in-depth accounting of
 its syntactic quirks, with an eye toward actually implementing a parser
 from scratch.
 
 With apologies to the generous people who work on the standard. Thanks
 for doing that—better you than me.
+
+Thanks to [@bakkot](https://github.com/bakkot) and
+[@mathiasbynens](https://github.com/mathiasbynens) for pointing out
+several additional quirks.
 
 Problems are rated in terms of difficulty, from `(*)` = easy to `(***)`
 = hard. We’ll start with the easiest problems.
@@ -47,6 +55,114 @@ conflict by making `else` higher-precedence than the preceding symbol
 
 Alternatively, I believe it’s equivalent to add "[lookahead ≠ `else`]"
 at the end of the IfStatement production that doesn’t have an `else`.
+
+
+### Other ambiguities and informal parts of the spec (*)
+
+Not all of the spec is as formal as it seems at first. Most of the stuff
+in this section is easy to deal with, but #4 is special.
+
+1.  The lexical grammar is ambiguous: when looking at the characters `<<=`,
+    there is the question of whether to parse that as one token `<<=`, two
+    tokens (`< <=` or `<< =`), or three (`< < =`).
+
+    Of course every programming language has this, and the fix is one
+    sentence of prose in the spec:
+
+    > The source text is scanned from left to right, repeatedly taking the
+    > longest possible sequence of code points as the next input element.
+
+    This is easy enough for hand-coded lexers, and for systems that are
+    designed to use separate lexical and syntactic grammars.  (Other
+    parser generators may need help to avoid parsing `functionf(){}` as
+    a function.)
+
+2.  The above line of prose does not apply *within* input elements, in
+    components of the lexical grammar. In those cases, the same basic
+    idea ("maximum munch") is specified using lookahead restrictions at
+    the end of productions:
+
+    > *LineTerminatorSequence* ::  
+    > &nbsp; &nbsp; &lt;LF&gt;  
+    > &nbsp; &nbsp; &lt;CR&gt;[lookahead &ne; &lt;LF&gt;]  
+    > &nbsp; &nbsp; &lt;LS&gt;  
+    > &nbsp; &nbsp; &lt;PS&gt;  
+    > &nbsp; &nbsp; &lt;CR&gt;&lt;LF&gt;
+
+    The lookahead restriction prevents a CR LF sequence from being
+    parsed as two adjacent *LineTerminatorSequence*s.
+
+    This technique is used in several places, particularly in
+    [*NotEscapeSequences*](https://tc39.es/ecma262/#prod-NotEscapeSequence).
+
+3.  Annex B.1.4 extends the syntax for regular expressions, making the
+    grammar ambiguous. Again, a line of prose explains how to cope:
+
+    > These changes introduce ambiguities that are broken by the
+    > ordering of grammar productions and by contextual
+    > information. When parsing using the following grammar, each
+    > alternative is considered only if previous production alternatives
+    > do not match.
+
+4.  Annex B.1.2 extends the syntax of string literals to allow legacy
+    octal escape sequences, like `\033`. It says:
+
+    > The syntax and semantics of 11.8.4 is extended as follows except
+    > that this extension is not allowed for strict mode code:
+
+    ...followed by a new definition of *EscapeSequence*.
+
+    So there are two sets of productions for *EscapeSequence*, and an
+    implementation is required to implement both and dynamically switch
+    between them.
+
+    This means that `function f() { "\033"; "use strict"; }` is a
+    SyntaxError, even though the octal escape is scanned before we know
+    we're in strict mode.
+
+For another ambiguity, see "Slashes" below.
+
+
+### Unicode quirks
+
+JavaScript source is Unicode and usually follows Unicode rules for thing
+like identifiers and whitespace, but it has a few special cases: `$`,
+`_`, `U+200C ZERO WIDTH NON-JOINER`, and `U+200D ZERO WIDTH JOINER` are
+legal in identifiers (the latter two only after the first character), and
+`U+FEFF ZERO WIDTH NO-BREAK SPACE` (also known as the byte-order mark) is
+treated as whitespace.
+
+It also allows any code point, including surrogate halves, even though the
+Unicode standard says that unpaired surrogate halves should be treated as
+encoding errors.
+
+
+### Legacy octal literals and escape sequences (*)
+
+This is more funny than difficult.
+
+In a browser, in non-strict code, every sequence of decimal digits (not
+followed by an identifier character) is a *NumericLiteral* token.
+
+If it starts with `0`, with more digits after, then it's a legacy Annex
+B.1.1 literal. If the token contains an `8` or a `9`, it's a decimal
+number. Otherwise, hilariously, it's octal.
+
+```
+js> [067, 068, 069, 070]
+[55, 68, 69, 56]
+```
+
+There are also legacy octal escape sequences in strings, and these have
+their own quirks. `'\07' === '\u{7}'`, but `'\08' !== '\u{8}'` since 8
+is not an octal digit. Instead `'\08' === '\0' + '8'`, because `\0`
+followed by `8` or `9` is a legacy octal escape sequence representing
+the null character. (Not to be confused with `\0` in strict code, not
+followed by a digit, which still represents the null character, but
+doesn't count as octal.)
+
+None of this is hard to implement, but figuring out what the spec says
+is hard.
 
 
 ### Strict mode (*)
@@ -94,6 +210,9 @@ include:
     either know that `foo` has two arguments both named `a`, or switch
     to strict mode, go back, and reparse the function from the
     beginning.
+
+    Fortunately an Early Error rule prohibits mixing `"use strict"` with
+    more complex parameter lists, like `function foo(x = eval('')) {`.
 
 *   The expression syntax “`delete` *Identifier*” and the abominable
     *WithStatement* are banned in strict mode.
@@ -180,7 +299,8 @@ to make it a little less confusing.)
     *   `await` is like that, but in async functions. Also it’s not a
         valid identifier in modules.
 
-    I don't understand why these are specified in this way.
+    Conditional keywords are entangled with slashes: `yield /a/g` is two
+    tokens in a generator but five tokens elsewhere.
 
 *   In strict mode code, `implements`, `interface`, `package`,
     `private`, `protected`, and `public` are reserved (via Early Errors
@@ -281,6 +401,37 @@ var { if } = obj;       // SyntaxError: `if` is not an Identifier
 ```
 
 
+### Escape sequences in keywords
+
+*(entangled with: conditional keywords, ASI)*
+
+You can use escape sequences to write variable and property names, but
+not keywords (including contextual keywords in contexts where they act
+as keywords).
+
+So `if (foo) {}` and `{ i\u0066: 0 }` are legal but `i\u0066 (foo)` is not.
+
+And you don't necessarily know if you're lexing a contextual keyword
+until the next token: `({ g\u0065t: 0 })` is legal, but
+`({ g\u0065t x(){} })` is not.
+
+And for `let` it's even worse: `l\u0065t` by itself is a legal way to
+reference a variable named `let`, which means that
+
+```js
+let
+x
+```
+declares a variable named `x`, while, thanks to ASI,
+
+```js
+l\u0065t
+x
+```
+is a reference to a variable named `let` followed by a reference to a
+variable named `x`.
+
+
 ### Early errors (**)
 
 *(entangled with: lazy parsing, conditional keywords, ASI)*
@@ -351,8 +502,8 @@ that are covered adequately elsewhere:
 
 *   `const x;` without an initializer is a Syntax Error.
 
-*   A direct substatement of an `if` statement, loop statement, can’t be a labelled
-    `function`.
+*   A direct substatement of an `if` statement, loop statement, or
+    `with` statement can’t be a labelled `function`.
 
 *   Early errors are used to hook up cover grammars.
 
@@ -360,6 +511,18 @@ that are covered adequately elsewhere:
         specify a very large refinement grammar when *ObjectLiteral*
         almost covers *ObjectAssignmentPattern*:
         [sorry, too complicated to explain](https://tc39.es/ecma262/#sec-object-initializer-static-semantics-early-errors).
+
+*   Early errors are sometimes used to prevent parsers from needing to
+    backtrack too much.
+
+    *   When parsing `async ( x = await/a/g )`, you don't know until the
+        next token if this is an async arrow or a call to a function named
+        `async`. This means you can't even tokenize properly, because in
+        the former case the thing following `x =` is two divisions and in
+        the latter case it's an *AwaitExpression* of a regular expression.
+        So an Early Error forbids having `await` in parameters at all,
+        allowing parsers to immediately throw an error if they find
+        themselves in this case.
 
 Many strict mode rules are enforced using Early Errors, but others
 affect runtime semantics.
@@ -541,6 +704,16 @@ For another example, this function contains two statements, not one:
 The indentation is misleading; actually ASI inserts a semicolon at the
 end of the first line: `return; g();`. (This function always returns
 undefined. The second statement is never reached.)
+
+These restrictions apply even to multiline comments, so the function
+
+```js
+function f(g) {
+  return /*
+    */ g();
+}
+```
+contains two statements, just as the previous example did.
 
 I’m not sure why these rules exist, but it’s probably because (back in
 the Netscape days) users complained about the bizarre behavior of
@@ -739,6 +912,45 @@ until later. Consider parsing `(a`. This could be the beginning of an
 arrow function, or not; we might not know until after we reach the
 matching `)`, which could be a long way away.
 
+Annex B.3.3 adds extremely complex rules for scoping for function
+declarations which makes this especially difficult. In
+
+```js
+function f() {
+    let x = 1;
+    return function g() {
+        {
+            function x(){}
+        }
+        {
+            let x;
+        }
+        return x;
+    };
+}
+```
+
+the function `g` does not use the initial `let x`, but in
+
+```js
+function f() {
+    let x = 1;
+    return function g() {
+        {
+            {
+                function x(){}
+            }
+            let x;
+        }
+        return x;
+    };
+}
+```
+it does.
+
+[Here](https://dev.to/rkirsling/tales-from-ecma-s-crypt-annex-b-3-3-56go)
+is a good writeup of what's going on in these examples.
+
 
 ### Arrow functions, assignment, destructuring, and cover grammars (\*\*\*)
 
@@ -810,3 +1022,15 @@ though syntactic rules are applied after the fact:
 
     ["a", "b", "c"]++;  // same
     ```
+
+
+## Conclusion
+
+What have we learned today?
+
+*   Do not write a JS parser.
+
+*   JavaScript has some syntactic horrors in it. But hey, you don't
+    make the world's most widely used programming language by avoiding
+    all mistakes. You do it by shipping a serviceable tool, in the right
+    circumstances, for the right users.

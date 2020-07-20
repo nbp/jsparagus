@@ -1,194 +1,127 @@
-# jsparagus - A parser generator
+[![Rust][Rust Badge]][Rust CI Link]
+[![NotImplemented Counter][NotImplemented Badge]][NotImplemented Search]
+[![Fuzzbug days since][Fuzzbug Days Badge]][Fuzzbugs]
+[![Fuzzbug open][Fuzzbug Open Badge]][Open Fuzzbugs]
+[![SmooshMonkey Build Result][SmooshMonkey Build Badge]][SmooshMonkey Build TreeHerder]
+[![SmooshMonkey Test Result][SmooshMonkey Test Badge]][SmooshMonkey Test TreeHerder]
 
-This toy parser generator spits out Python 3 code.
+# jsparagus - A JavaScript parser written in Rust
 
-The input to the parser generator looks like this:
+jsparagus is intended to replace the JavaScript parser in Firefox.
 
-```python
-grammar = {
-    'expr': [
-        ['term'],
-        ['expr', '+', 'term'],
-        ['expr', '-', 'term'],
-    ],
-    'term': [
-        ['unary'],
-        ['term', '*', 'unary'],
-        ['term', '/', 'unary'],
-    ],
-    'unary': [
-        ['prim'],
-        ['-', 'unary'],
-    ],
-    'prim': [
-        ['NUMBER'],
-        ['NAME'],
-        ['(', 'expr', ')'],
-    ],
-}
-```
+Current status:
 
-representing this grammar:
+*   jsparagus is not on crates.io yet. The AST design is not stable
+    enough.  We do have a build of the JS shell that includes jsparagus
+    as an option (falling back on C++ for features jsparagus doesn't
+    support). See
+    [mozilla-spidermonkey/rust-frontend](https://github.com/mozilla-spidermonkey/rust-frontend).
 
-```
-expr ::= term
-       | expr "+" term
-       | expr "-" term
+*   It can parse a lot of JS scripts, and will eventually be able to parse everything.
+    See the current limitations below, or our GitHub issues.
 
-term ::= unary
-       | term "*" unary
-       | term "/" unary
+*   Our immediate goal is to [support parsing everything in Mozilla's JS
+    test suite and the features in test262 that Firefox already
+    supports](https://github.com/mozilla-spidermonkey/jsparagus/milestone/1).
 
-unary ::= prim
-        | "-" unary
-
-prim ::= NUMBER
-       | NAME
-       | "(" expr ")"
-```
-
-It generates a table-driven shift-reduce parser:
-
-```python
-import pgen_runtime
-from pgen_runtime import Apply
-
-actions = [
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {None: -9, '*': -9, '/': -9, '+': -9, '-': -9, ')': -9},
-    {None: -10, '*': -10, '/': -10, '+': -10, '-': -10, ')': -10},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {'+': 11, '-': 12, None: -9223372036854775807},
-    {'*': 13, '/': 14, None: -1, '+': -1, '-': -1, ')': -1},
-    {None: -4, '*': -4, '/': -4, '+': -4, '-': -4, ')': -4},
-    {None: -7, '*': -7, '/': -7, '+': -7, '-': -7, ')': -7},
-    {None: -8, '*': -8, '/': -8, '+': -8, '-': -8, ')': -8},
-    {')': 15, '+': 11, '-': 12},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {'-': 1, 'NUMBER': 2, 'NAME': 3, '(': 4},
-    {None: -11, '*': -11, '/': -11, '+': -11, '-': -11, ')': -11},
-    {'*': 13, '/': 14, None: -2, '+': -2, '-': -2, ')': -2},
-    {'*': 13, '/': 14, None: -3, '+': -3, '-': -3, ')': -3},
-    {None: -5, '*': -5, '/': -5, '+': -5, '-': -5, ')': -5},
-    {None: -6, '*': -6, '/': -6, '+': -6, '-': -6, ')': -6},
-]
-
-ctns = [
-    {'expr': 5, 'term': 6, 'unary': 7, 'prim': 8},
-    {'unary': 9, 'prim': 8},
-    {},
-    {},
-    {'expr': 10, 'term': 6, 'unary': 7, 'prim': 8},
-    {},
-    {},
-    {},
-    {},
-    {},
-    {},
-    {'term': 16, 'unary': 7, 'prim': 8},
-    {'term': 17, 'unary': 7, 'prim': 8},
-    {'unary': 18, 'prim': 8},
-    {'unary': 19, 'prim': 8},
-    {},
-    {},
-    {},
-    {},
-    {},
-]
-
-reductions = [
-    ('expr', 1, lambda builder, x0: x0),
-    ('expr', 3, lambda builder, x0, x1, x2: builder.expr_P1(x0, x1, x2)),
-    ('expr', 3, lambda builder, x0, x1, x2: builder.expr_P2(x0, x1, x2)),
-    ('term', 1, lambda builder, x0: x0),
-    ('term', 3, lambda builder, x0, x1, x2: builder.term_P1(x0, x1, x2)),
-    ('term', 3, lambda builder, x0, x1, x2: builder.term_P2(x0, x1, x2)),
-    ('unary', 1, lambda builder, x0: x0),
-    ('unary', 2, lambda builder, x0, x1: builder.unary_P1(x0, x1)),
-    ('prim', 1, lambda builder, x0: x0),
-    ('prim', 1, lambda builder, x0: x0),
-    ('prim', 3, lambda builder, x0, x1, x2: builder.prim_P2(x0, x1, x2)),
-]
-
-class DefaultBuilder:
-    def expr_P1(self, x0, x1, x2): return ('expr 1', x0, x1, x2)
-    def expr_P2(self, x0, x1, x2): return ('expr 2', x0, x1, x2)
-    def term_P1(self, x0, x1, x2): return ('term 1', x0, x1, x2)
-    def term_P2(self, x0, x1, x2): return ('term 2', x0, x1, x2)
-    def unary_P1(self, x0, x1): return ('unary 1', x0, x1)
-    def prim_P2(self, x0, x1, x2): return ('prim 2', x0, x1, x2)
-
-parse_expr = pgen_runtime.make_parse_fn(actions, ctns, reductions, 0, DefaultBuilder)
-```
-
-And the result of parsing the input `2 * ( x + y )` looks like this:
-
-```python
-('term 1',
-    '2',
-    '*',
-    ('prim 2',
-        '(',
-        ('expr 1', 'x', '+', 'y'),
-        ')'
-    )
-)
-```
-
-The parser spits out tuples by default. It's easy to customize the
-method names of the DefaultBuilder, and it's easy to replace it with
-your own builder class that produces the AST you actually want.
-
-This has a few more features geared toward being able to parse
-JavaScript, which [has an idiosyncratic syntax](js-quirks.md).
-See [js_parser/README.md](https://github.com/jorendorff/pgen/tree/master/js_parser)
-for details.
+Join us on Discord: https://discord.gg/tUFFk9Y
 
 
-## Getting started
+## Building jsparagus
 
-First, the usual dance:
+To build the parser by itself:
 
 ```sh
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+make init
+make all
 ```
 
-Then you can:
+The build takes about 3 minutes to run on my laptop.
 
-*   Generate parser tables for JavaScript (!):
+When it's done, you can:
 
-    ```sh
-    make js_parser/parser_tables.py
-    ```
+*   Run `make check` to make sure things are working.
 
-    **Note:** This takes about 3 minutes to run on my laptop. jsparagus
-    is slow.
+*   `cd crates/driver && cargo run -- -D` to try out the JS parser and bytecode emitter.
 
-    If you don't have `make`, you can run the commands by hand:
 
-    ```sh
-    python3 -m js_parser.generate_js_parser_tables --progress -o js_parser/parser_generated.jsparagus_dump
-    python3 -m js_parser.generate_js_parser_tables js_parser/parser_generated.jsparagus_dump -o js_parser/parser_tables.py
-    ```
+## Building and running SpiderMonkey with jsparagus
 
-*   Run `make check` (or `./test.sh`) to make sure things are working.
+*   To build SpiderMonkey with jsparagus, `configure` with `--enable-smoosh`.
 
-*   To see your parser run, `make jsdemo` (or `python -m js_parser.try_it`).
+    This builds with a specific known-good revision of jsparagus.
 
-*   The rust version of the JS parser can be generated using:
+*   Building SpiderMonkey with your own local jsparagus repo, for
+    development, takes more work; see [the jsparagus + SpiderMonkey wiki
+    page](https://github.com/mozilla-spidermonkey/jsparagus/wiki/SpiderMonkey)
+    for details.
 
-    ```sh
-    python3 -m js_parser.generate_js_parser_tables --progress -o js_parser/parser_generated.jsparagus_dump
-    python3 -m js_parser.generate_js_parser_tables js_parser/parser_generated.jsparagus_dump -o rust/parser/src/parser_generated.rs
-    cd rust/parser
-    cargo run
-    ```
+**NOTE: Even after building with jsparagus, you must run the shell with
+`--smoosh`** to enable jsparagus at run time.
+
+
+
+## Benchmarking
+
+### Fine-grain Benchmarks
+
+Fine-grain benchmarks are used to detect regression by focusing on each part of
+the parser at one time, exercising only this one part. The benchmarks are not
+meant to represent any real code sample, but to focus on executing specific
+functions of the parser.
+
+To run this parser, you should execute the following command at the root of the
+repository:
+
+```sh
+cd crates/parser
+cargo bench
+```
+
+### Real-world JavaScript
+
+Real world benchmarks are used to track the overall evolution of performance over
+time. The benchmarks are meant to represent realistic production use cases.
+
+To benchmark the AST generation, we use SpiderMonkey integration to execute the
+parser and compare it against SpiderMonkey's default parser. Therefore, to run
+this benchmark, we have to first compile SpiderMonkey, then execute SpiderMonkey
+shell on the benchmark. (The following instructions assume that `~` is the
+directory where all projects are checked out)
+
+* Generate Parse Tables:
+
+  ```sh
+  cd ~/jsparagus/
+  make init
+  make all
+  ```
+
+* Compile an optimized version of [SpiderMonkey's JavaScript shell](https://github.com/mozilla/gecko-dev):
+
+  ```sh
+  cd ~/mozilla/js/src/
+  # set the jsparagus' path to the abosulte path to ~/jsparagus.
+  $EDITOR frontend/smoosh/Cargo.toml
+  ../../mach vendor rust
+  # Create a build directory
+  mkdir obj.opt
+  cd obj.opt
+  # Build SpiderMonkey
+  ../configure --enable-nspr-build --enable-smoosh --enable-debug-symbols=-ggdb3 --disable-debug --enable-optimize --enable-release --disable-tests
+  make
+  ```
+
+* Execute the [real-js-samples](https://github.com/nbp/real-js-samples/) benchmark:
+
+  ```sh
+  cd ~/real-js-samples/
+  ~/mozilla/js/src/obj.opt/dist/bin/js ./20190416.js
+  ```
+
+This should return the overall time taken to parse all the Script once, in the
+cases where there is no error. The goal is to minimize the number of
+nano-seconds per bytes.
 
 
 ## Limitations
@@ -196,31 +129,31 @@ Then you can:
 It's *all* limitations, but I'll try to list the ones that are relevant
 to parsing JS.
 
-*   Lookahead assertions are limited to one token. (The JS grammar
-    contains an occasional
-    ``[lookahead != `let [`]``
-    and even
-    ``[lookahead != `async [no LineTerminator here] function`]``.)
+*   Features that are not implemented in the parser yet include `let`,
+    `import` and `export`, `async` functions, `yield` expressions, the
+    use of `await` and `yield` as identifiers, template strings,
+    `BigInt`, Unicode escape sequences that evaluate to surrogate code
+    points, legacy octal integer literals, legacy octal escape
+    sequences, some RegExp flags, strict mode code, `__proto__` in
+    object literals, some features of destructuring assignment.
 
-*   There is nothing like the level of weirdness that would be needed to
-    implement restricted productions ("`[no LineTerminator here]`").
+    Many more features are not yet supported in the bytecode emitter.
 
-*   Errors are poor:
-    `(` produces "expected one of {'(', 'VAR', 'NUM', '-'}, got None".
-    `)` produces "expected one of {'(', 'VAR', 'NUM', '-'}, got None".
-    `a b` produces "expected one of {'-', '/', '+', '*', ')', None}, got 'VAR'".
+*   Error messages are poor.
 
-*   Rust support is extremely rudimentary.
+We're currently working on parser performance and completeness, as well
+as the bytecode emitter and further integration with SpiderMonkey.
 
-*   Support for feedback from syntactic context to lexical analysis
-    (selecting the lexical goal symbol) is present in the Python version
-    only, not yet in Rust.
 
-    This is needed for resolving the conflict in the lexical grammar
-    between RegExps and division operators, at least. It might also be
-    used for conditional keywords and for parsing TemplateTail.
-
-*   No table compaction or table optimization. I think there's plenty of
-    low-hanging fruit there.
-
-*   Documentation. There isn't any.
+[Rust Badge]: https://github.com/mozilla-spidermonkey/jsparagus/workflows/Rust/badge.svg
+[Rust CI Link]: https://github.com/mozilla-spidermonkey/jsparagus/actions?query=branch%3Amaster
+[NotImplemented Badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmozilla-spidermonkey%2Fjsparagus%2Fci_results%2F.metrics%2Fbadges%2Fnot-implemented.json
+[NotImplemented Search]: https://github.com/mozilla-spidermonkey/jsparagus/search?q=notimplemented&unscoped_q=notimplemented
+[Fuzzbug days Badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmozilla-spidermonkey%2Fjsparagus%2Fci_results%2F.metrics%2Fbadges%2Fsince-last-fuzzbug.json
+[Fuzzbug Open Badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmozilla-spidermonkey%2Fjsparagus%2Fci_results%2F.metrics%2Fbadges%2Fopen-fuzzbug.json
+[Fuzzbugs]: https://github.com/mozilla-spidermonkey/jsparagus/issues?utf8=%E2%9C%93&q=label%3AlibFuzzer+
+[Open Fuzzbugs]: https://github.com/mozilla-spidermonkey/jsparagus/labels/libFuzzer
+[SmooshMonkey Build Badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmozilla-spidermonkey%2Fjsparagus%2Fci_smoosh_status%2Fsmoosh_build.json
+[SmooshMonkey Build TreeHerder]: https://treeherder.mozilla.org/#/jobs?repo=mozilla-central&tier=1%2C2%2C3&searchStr=sm-nonunified
+[SmooshMonkey Test Badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fmozilla-spidermonkey%2Fjsparagus%2Fci_smoosh_status%2Fsmoosh_test.json
+[SmooshMonkey Test TreeHerder]: https://treeherder.mozilla.org/#/jobs?repo=mozilla-central&tier=1%2C2%2C3&searchStr=sm-smoosh
